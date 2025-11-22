@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { Search, File, Loader2, RefreshCw, Database, Zap, HardDrive, Clock, Folder, FileText, Copy } from "lucide-react";
@@ -19,6 +19,7 @@ interface FileResult {
 
 function App() {
   const [query, setQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
   const [results, setResults] = useState<FileResult[]>([]);
   const [searching, setSearching] = useState(false);
   const [indexing, setIndexing] = useState(false);
@@ -27,6 +28,7 @@ function App() {
   const [searchTime, setSearchTime] = useState(0);
   const [rootPath] = useState("C:/");
   const [copiedPath, setCopiedPath] = useState<string | null>(null);
+  const searchAbortController = useRef<AbortController | null>(null);
 
   // Copy path to clipboard
   const copyToClipboard = async (path: string, e: React.MouseEvent) => {
@@ -116,17 +118,33 @@ function App() {
   };
 
   const performSearch = async (searchQuery: string) => {
+    // Cancel any ongoing search
+    if (searchAbortController.current) {
+      searchAbortController.current.abort();
+    }
+    
     if (searchQuery.length > 0 && indexStats?.indexed) {
       setSearching(true);
+      searchAbortController.current = new AbortController();
       const startTime = performance.now();
+      
       try {
         const res = await invoke<string[]>("search_index", { query: searchQuery });
+        
+        // Check if this search was cancelled
+        if (searchAbortController.current?.signal.aborted) {
+          return;
+        }
+        
         const endTime = performance.now();
         setSearchTime(endTime - startTime);
         // Parse results into structured data
         const parsedResults = res.map(path => parseFilePath(path));
         setResults(parsedResults);
       } catch (error) {
+        if (searchAbortController.current?.signal.aborted) {
+          return; // Ignore errors from cancelled requests
+        }
         console.error("Search failed", error);
         setResults([]);
       } finally {
@@ -135,34 +153,32 @@ function App() {
     } else {
       setResults([]);
       setSearchTime(0);
+      setSearching(false);
     }
   };
 
-  // Auto-search with debounce - but keep previous results visible while typing
+  // Debounce the query separately from the input
   useEffect(() => {
-    // Don't debounce if query is empty
-    if (query.trim() === '') {
+    const timer = setTimeout(() => {
+      setDebouncedQuery(query);
+    }, 250);
+
+    return () => clearTimeout(timer);
+  }, [query]);
+
+  // Search when debounced query changes
+  useEffect(() => {
+    if (debouncedQuery.trim() === '') {
       setResults([]);
       setSearchTime(0);
       setSearching(false);
       return;
     }
 
-    // Show searching indicator immediately but keep old results
-    const immediateTimer = setTimeout(() => {
-      setSearching(true);
-    }, 50);
-
-    // Perform search after user stops typing
-    const searchTimer = setTimeout(() => {
-      performSearch(query);
-    }, 150); // Faster response
-
-    return () => {
-      clearTimeout(immediateTimer);
-      clearTimeout(searchTimer);
-    };
-  }, [query, indexStats]);
+    if (indexStats?.indexed) {
+      performSearch(debouncedQuery);
+    }
+  }, [debouncedQuery, indexStats]);
 
   // Manual search trigger (Enter key or button)
   const handleSearch = (e?: React.FormEvent) => {

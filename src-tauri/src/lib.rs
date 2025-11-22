@@ -261,6 +261,14 @@ async fn search_index(
             let query_lower = query.to_lowercase();
             let query_bytes = query_lower.as_bytes();
             
+            // Check if query has spaces - indicates path pattern search (e.g., "spring Application.java")
+            let has_spaces = query.contains(' ');
+            let query_parts: Vec<&str> = if has_spaces {
+                query_lower.split_whitespace().collect()
+            } else {
+                vec![]
+            };
+            
             // Pre-create matcher once (reused across threads)
             let matcher = SkimMatcherV2::default()
                 .ignore_case()
@@ -275,8 +283,48 @@ async fn search_index(
                         .unwrap_or_default();
                     
                     let file_name_lower = file_name.to_lowercase();
+                    let path_lower = path.to_lowercase();
                     
-                    // Fast exact match checks using bytes comparison
+                    // MULTI-PART PATH SEARCH: "spring Application.java"
+                    if has_spaces && query_parts.len() >= 2 {
+                        // Check if path contains all parts in order
+                        let all_parts_in_path = query_parts.iter().all(|part| path_lower.contains(part));
+                        
+                        if all_parts_in_path {
+                            // Calculate how well the path matches
+                            let mut path_score = 300_000_000i64; // High score for multi-part matches
+                            
+                            // Get last part (assumed to be filename)
+                            let last_part = query_parts.last().unwrap();
+                            
+                            // Bonus if filename matches the last part exactly
+                            if file_name_lower == *last_part {
+                                path_score += 200_000_000; // 500M total for exact filename in path pattern
+                            } else if file_name_lower.contains(last_part) {
+                                path_score += 100_000_000; // 400M for containing filename
+                            }
+                            
+                            // Check if parts appear consecutively in path
+                            let mut last_pos = 0;
+                            let mut consecutive = true;
+                            for part in &query_parts {
+                                if let Some(pos) = path_lower[last_pos..].find(part) {
+                                    last_pos += pos + part.len();
+                                } else {
+                                    consecutive = false;
+                                    break;
+                                }
+                            }
+                            
+                            if consecutive {
+                                path_score += 50_000_000; // Bonus for consecutive parts
+                            }
+                            
+                            return Some((path.clone(), path_score));
+                        }
+                    }
+                    
+                    // EXACT FILENAME MATCHES (highest priority for single-word queries)
                     if file_name_lower == query_lower {
                         return Some((path.clone(), 1_000_000_000));
                     }
@@ -310,7 +358,7 @@ async fn search_index(
                     }
                     
                     // Only do fuzzy matching if query is short enough (performance optimization)
-                    if query.len() <= 50 {
+                    if query.len() <= 50 && !has_spaces {
                         // Fuzzy match on filename only (skip full path for speed)
                         if let Some(fuzzy_score) = matcher.fuzzy_match(&file_name, &query) {
                             if fuzzy_score > 0 {
