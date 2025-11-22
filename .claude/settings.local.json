@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(netstat:*)",
+      "Bash(findstr:*)",
+      "Bash(tasklist:*)",
+      "Bash(taskkill:*)",
+      "Bash(npm run tauri:*)",
+      "Bash(rustup target add:*)",
+      "Bash(rustup show:*)",
+      "Bash(rustup default:*)",
+      "Bash(rustup component add:*)",
+      "Bash(rustc +stable-x86_64-pc-windows-msvc --print sysroot:*)",
+      "Bash(rustc:*)",
+      "Bash(ldd:*)",
+      "Bash(windres:*)",
+      "Bash(cargo build:*)",
+      "Bash(TAURI_SKIP_WINRES=1 cargo build:*)",
+      "Bash(export TAURI_SKIP_WINRES=1)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

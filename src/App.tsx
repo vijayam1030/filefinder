@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { Search, File, Loader2, RefreshCw, Database, Zap, HardDrive, Clock } from "lucide-react";
+import { Search, File, Loader2, RefreshCw, Database, Zap, HardDrive, Clock, Folder, FileText, Copy } from "lucide-react";
 import "./App.css";
 
 interface IndexStats {
@@ -10,15 +10,60 @@ interface IndexStats {
   last_indexed: string | null;
 }
 
+interface FileResult {
+  path: string;
+  fileName: string;
+  directory: string;
+  extension: string;
+}
+
 function App() {
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState<string[]>([]);
+  const [results, setResults] = useState<FileResult[]>([]);
   const [searching, setSearching] = useState(false);
   const [indexing, setIndexing] = useState(false);
   const [indexProgress, setIndexProgress] = useState(0);
   const [indexStats, setIndexStats] = useState<IndexStats | null>(null);
   const [searchTime, setSearchTime] = useState(0);
   const [rootPath] = useState("C:/");
+  const [copiedPath, setCopiedPath] = useState<string | null>(null);
+
+  // Copy path to clipboard
+  const copyToClipboard = async (path: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(path);
+      setCopiedPath(path);
+      setTimeout(() => setCopiedPath(null), 2000);
+    } catch (error) {
+      console.error("Failed to copy:", error);
+    }
+  };
+
+  // Parse file path into structured data
+  const parseFilePath = (path: string): FileResult => {
+    const normalizedPath = path.replace(/\\/g, '/');
+    const parts = normalizedPath.split('/');
+    const fileName = parts[parts.length - 1] || '';
+    const directory = parts.slice(0, -1).join('/') || '/';
+    const extension = fileName.includes('.') ? fileName.split('.').pop()?.toLowerCase() || '' : '';
+    
+    return {
+      path: normalizedPath,
+      fileName,
+      directory,
+      extension
+    };
+  };
+
+  // Get file icon based on extension
+  const getFileIcon = (extension: string) => {
+    const docTypes = ['txt', 'doc', 'docx', 'pdf', 'md', 'rtf'];
+    if (docTypes.includes(extension)) {
+      return <FileText className="result-icon" size={22} />;
+    }
+    return <File className="result-icon" size={22} />;
+  };
 
   useEffect(() => {
     initIndex();
@@ -70,30 +115,60 @@ function App() {
     }
   };
 
-  useEffect(() => {
-    const timer = setTimeout(async () => {
-      if (query.length > 0 && indexStats?.indexed) {
-        setSearching(true);
-        const startTime = performance.now();
-        try {
-          const res = await invoke<string[]>("search_index", { query });
-          const endTime = performance.now();
-          setSearchTime(endTime - startTime);
-          setResults(res);
-        } catch (error) {
-          console.error("Search failed", error);
-          setResults([]);
-        } finally {
-          setSearching(false);
-        }
-      } else {
+  const performSearch = async (searchQuery: string) => {
+    if (searchQuery.length > 0 && indexStats?.indexed) {
+      setSearching(true);
+      const startTime = performance.now();
+      try {
+        const res = await invoke<string[]>("search_index", { query: searchQuery });
+        const endTime = performance.now();
+        setSearchTime(endTime - startTime);
+        // Parse results into structured data
+        const parsedResults = res.map(path => parseFilePath(path));
+        setResults(parsedResults);
+      } catch (error) {
+        console.error("Search failed", error);
         setResults([]);
-        setSearchTime(0);
+      } finally {
+        setSearching(false);
       }
-    }, 150);
+    } else {
+      setResults([]);
+      setSearchTime(0);
+    }
+  };
 
-    return () => clearTimeout(timer);
+  // Auto-search with debounce - but keep previous results visible while typing
+  useEffect(() => {
+    // Don't debounce if query is empty
+    if (query.trim() === '') {
+      setResults([]);
+      setSearchTime(0);
+      setSearching(false);
+      return;
+    }
+
+    // Show searching indicator immediately but keep old results
+    const immediateTimer = setTimeout(() => {
+      setSearching(true);
+    }, 50);
+
+    // Perform search after user stops typing
+    const searchTimer = setTimeout(() => {
+      performSearch(query);
+    }, 150); // Faster response
+
+    return () => {
+      clearTimeout(immediateTimer);
+      clearTimeout(searchTimer);
+    };
   }, [query, indexStats]);
+
+  // Manual search trigger (Enter key or button)
+  const handleSearch = (e?: React.FormEvent) => {
+    e?.preventDefault();
+    performSearch(query);
+  };
 
   const formatBytes = (bytes: number) => {
     const avg = bytes * 300; // Rough estimate: 300 bytes per path
@@ -213,7 +288,7 @@ function App() {
       </div>
 
       {/* Search Input */}
-      <div className="search-container fade-in">
+      <form onSubmit={handleSearch} className="search-container">
         <Search className="search-icon" size={22} />
         <input
           className="search-input"
@@ -221,18 +296,27 @@ function App() {
           onChange={(e) => setQuery(e.target.value)}
           placeholder={
             indexStats?.indexed
-              ? 'Search with regex (e.g., "\\.txt$") or plain text...'
+              ? 'Super flexible search: try "app config", "appconfig", "app-config", or regex...'
               : "Build index to start searching"
           }
           disabled={!indexStats?.indexed || indexing}
           autoFocus={indexStats?.indexed}
         />
-      </div>
+        <button
+          type="submit"
+          className="search-btn"
+          disabled={!indexStats?.indexed || indexing || !query}
+          title="Search (Enter)"
+        >
+          <Search size={18} />
+        </button>
+      </form>
 
       {/* Results */}
       {query && results.length > 0 && (
         <div className="results-header fade-in">
           <span className="results-count">
+            <Database size={16} />
             {results.length.toLocaleString()} results • {searchTime.toFixed(1)}ms
           </span>
         </div>
@@ -268,20 +352,41 @@ function App() {
         )}
 
         {!searching &&
-          results.map((path, index) => (
+          results.map((fileResult, index) => (
             <div
               key={index}
               className="result-item"
               onClick={async () => {
                 try {
-                  await invoke("open_file", { path });
+                  await invoke("open_file", { path: fileResult.path });
                 } catch (error) {
                   console.error("Failed to open file:", error);
                 }
               }}
             >
-              <File className="result-icon" size={20} />
-              <span className="result-path">{path}</span>
+              {getFileIcon(fileResult.extension)}
+              <div className="result-content">
+                <div className="result-path">{fileResult.path}</div>
+                <div className="result-details">
+                  <span className="result-badge">
+                    <Folder size={12} />
+                    {fileResult.directory.split('/').slice(-2).join('/') || '/'}
+                  </span>
+                  {fileResult.extension && (
+                    <span className="result-badge">
+                      {fileResult.extension.toUpperCase()}
+                    </span>
+                  )}
+                  <button
+                    className="copy-btn"
+                    onClick={(e) => copyToClipboard(fileResult.path, e)}
+                    title="Copy path"
+                  >
+                    <Copy size={14} />
+                    {copiedPath === fileResult.path ? 'Copied!' : 'Copy'}
+                  </button>
+                </div>
+              </div>
             </div>
           ))}
       </div>

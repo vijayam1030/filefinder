@@ -6,6 +6,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use parking_lot::RwLock;
 use tauri::Emitter;
+use fuzzy_matcher::FuzzyMatcher;
+use fuzzy_matcher::skim::SkimMatcherV2;
+use rayon::prelude::*;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct IndexStats {
@@ -223,141 +226,121 @@ async fn search_index(
     query: String,
     state: tauri::State<'_, FileIndex>,
 ) -> Result<Vec<String>, String> {
-    let files = state.files.read();
+    let files = state.files.read().clone(); // Clone to release lock immediately
     
-    // Check if query looks like regex (contains regex special chars)
-    let is_regex = query.contains('\\') || query.contains('$') || query.contains('^') 
-        || query.contains('[') || query.contains('(') || query.contains('.');
+    if query.trim().is_empty() {
+        return Ok(Vec::new());
+    }
     
-    let mut scored_results: Vec<(String, i32)> = if is_regex {
-        // Regex mode
-        let regex = Regex::new(&query).map_err(|e| e.to_string())?;
-        files
-            .iter()
-            .filter(|path| {
-                if let Some(file_name) = Path::new(path).file_name() {
-                    regex.is_match(&file_name.to_string_lossy())
-                } else {
-                    false
-                }
-            })
-            .map(|path| (path.clone(), 100)) // All regex matches get same score
-            .collect()
-    } else {
-        // Smart word-based search
-        let search_words: Vec<String> = query
-            .split_whitespace()
-            .map(|s| s.to_lowercase())
+    // Move heavy computation to blocking thread
+    tokio::task::spawn_blocking(move || {
+        // Check if query looks like regex
+        let is_regex = query.contains('\\') || query.contains('$') || query.contains('^') 
+            || query.contains('[') || query.contains('(');
+        
+        let mut scored_results: Vec<(String, i64)> = if is_regex {
+            // Regex mode - case insensitive by default
+            let pattern = format!("(?i){}", query);
+            let regex = Regex::new(&pattern).map_err(|e| e.to_string())?;
+            files
+                .par_iter()
+                .filter_map(|path| {
+                    if regex.is_match(path) || 
+                       Path::new(path)
+                           .file_name()
+                           .map(|f| regex.is_match(&f.to_string_lossy()))
+                           .unwrap_or(false) {
+                        Some((path.clone(), 1_000_000))
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        } else {
+            // Optimized fuzzy search
+            let query_lower = query.to_lowercase();
+            let query_bytes = query_lower.as_bytes();
+            
+            // Pre-create matcher once (reused across threads)
+            let matcher = SkimMatcherV2::default()
+                .ignore_case()
+                .use_cache(true);
+            
+            files
+                .par_iter()
+                .filter_map(|path| {
+                    let file_name = Path::new(path)
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_default();
+                    
+                    let file_name_lower = file_name.to_lowercase();
+                    
+                    // Fast exact match checks using bytes comparison
+                    if file_name_lower == query_lower {
+                        return Some((path.clone(), 1_000_000_000));
+                    }
+                    
+                    // Check without extension
+                    if let Some((name, _)) = file_name_lower.rsplit_once('.') {
+                        if name == query_lower {
+                            return Some((path.clone(), 900_000_000));
+                        }
+                    }
+                    
+                    // Fast substring check
+                    if file_name_lower.contains(&query_lower) {
+                        let mut score = 500_000_000i64;
+                        
+                        if file_name_lower.starts_with(&query_lower) {
+                            score += 100_000_000;
+                        }
+                        
+                        // Word boundary bonus
+                        let words: Vec<&str> = file_name_lower
+                            .split(|c: char| !c.is_alphanumeric())
+                            .filter(|w| !w.is_empty())
+                            .collect();
+                        
+                        if words.iter().any(|&w| w == query_lower.as_str()) {
+                            score += 50_000_000;
+                        }
+                        
+                        return Some((path.clone(), score));
+                    }
+                    
+                    // Only do fuzzy matching if query is short enough (performance optimization)
+                    if query.len() <= 50 {
+                        // Fuzzy match on filename only (skip full path for speed)
+                        if let Some(fuzzy_score) = matcher.fuzzy_match(&file_name, &query) {
+                            if fuzzy_score > 0 {
+                                let capped_score = fuzzy_score.min(1_000_000);
+                                return Some((path.clone(), capped_score));
+                            }
+                        }
+                    }
+                    
+                    None
+                })
+                .collect()
+        };
+        
+        // Sort by score descending, then alphabetically
+        scored_results.par_sort_unstable_by(|a, b| {
+            b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0))
+        });
+        
+        // Return top 2000 results
+        let results: Vec<String> = scored_results
+            .into_iter()
+            .take(2000)
+            .map(|(path, _)| path)
             .collect();
         
-        if search_words.is_empty() {
-            return Ok(Vec::new());
-        }
-        
-        files
-            .iter()
-            .filter_map(|path| {
-                let path_lower = path.to_lowercase();
-                let file_name = Path::new(path)
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_lowercase())
-                    .unwrap_or_default();
-                
-                // Create concatenated version (e.g., "hello world" -> "helloworld")
-                let concatenated = search_words.join("");
-                
-                // Check if all words are present in the path OR concatenated form exists
-                let all_words_present = search_words.iter().all(|word| path_lower.contains(word))
-                    || path_lower.contains(&concatenated);
-                
-                if !all_words_present {
-                    return None;
-                }
-                
-                // Score the match
-                let mut score = 0;
-                
-                // Check for concatenated match in filename (very high priority)
-                if file_name.contains(&concatenated) {
-                    score += 1500; // Higher than individual words
-                    
-                    // Extra bonus if filename IS the concatenated word
-                    if file_name.starts_with(&concatenated) {
-                        score += 300;
-                    }
-                }
-                
-                // Priority 1: All words in filename (highest priority)
-                let all_in_filename = search_words.iter().all(|word| file_name.contains(word));
-                if all_in_filename {
-                    score += 1000;
-                    
-                    // Bonus: Words appear in order
-                    let joined = search_words.join(" ");
-                    if file_name.contains(&joined) {
-                        score += 500; // Exact phrase match
-                    }
-                    
-                    // Bonus: Filename starts with first word
-                    if file_name.starts_with(&search_words[0]) {
-                        score += 200;
-                    }
-                }
-                
-                // Priority 2: Words appear in path components (folder structure)
-                let path_components: Vec<String> = Path::new(path)
-                    .components()
-                    .filter_map(|c| {
-                        if let std::path::Component::Normal(os_str) = c {
-                            Some(os_str.to_string_lossy().to_lowercase())
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-                
-                // Check if consecutive path components match consecutive search words
-                for i in 0..path_components.len() {
-                    for j in 0..search_words.len() {
-                        if i + j < path_components.len() 
-                           && path_components[i + j].contains(&search_words[j]) {
-                            score += 100; // Words in path structure
-                        }
-                    }
-                }
-                
-                // Bonus for exact component matches
-                for word in &search_words {
-                    for component in &path_components {
-                        if component == word {
-                            score += 150; // Exact folder/file name match
-                        }
-                    }
-                }
-                
-                // Only return if we have a positive score
-                if score > 0 {
-                    Some((path.clone(), score))
-                } else {
-                    None
-                }
-            })
-            .collect()
-    };
-    
-    // Sort by score (descending), then alphabetically
-    scored_results.sort_by(|a, b| {
-        b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0))
-    });
-    
-    // Return top 2000 results
-    let results: Vec<String> = scored_results
-        .into_iter()
-        .take(2000)
-        .map(|(path, _)| path)
-        .collect();
-    
-    Ok(results)
+        Ok(results)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
