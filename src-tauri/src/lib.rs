@@ -263,8 +263,12 @@ async fn search_index(
                     .map(|n| n.to_string_lossy().to_lowercase())
                     .unwrap_or_default();
                 
-                // Check if all words are present in the path
-                let all_words_present = search_words.iter().all(|word| path_lower.contains(word));
+                // Create concatenated version (e.g., "hello world" -> "helloworld")
+                let concatenated = search_words.join("");
+                
+                // Check if all words are present in the path OR concatenated form exists
+                let all_words_present = search_words.iter().all(|word| path_lower.contains(word))
+                    || path_lower.contains(&concatenated);
                 
                 if !all_words_present {
                     return None;
@@ -272,6 +276,16 @@ async fn search_index(
                 
                 // Score the match
                 let mut score = 0;
+                
+                // Check for concatenated match in filename (very high priority)
+                if file_name.contains(&concatenated) {
+                    score += 1500; // Higher than individual words
+                    
+                    // Extra bonus if filename IS the concatenated word
+                    if file_name.starts_with(&concatenated) {
+                        score += 300;
+                    }
+                }
                 
                 // Priority 1: All words in filename (highest priority)
                 let all_in_filename = search_words.iter().all(|word| file_name.contains(word));
