@@ -125,6 +125,40 @@ h1 {
   margin-top: 0.25rem;
 }
 
+/* Root Path Input */
+.path-input-container {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  background: rgba(37, 38, 43, 0.6);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(100, 108, 255, 0.15);
+  border-radius: 12px;
+  padding: 1rem 1.5rem;
+}
+
+.path-input-container label {
+  font-weight: 600;
+  color: #888;
+  min-width: 100px;
+}
+
+.path-input-container input {
+  flex: 1;
+  padding: 0.75rem 1rem;
+  background: rgba(26, 27, 38, 0.6);
+  border: 1px solid rgba(100, 108, 255, 0.2);
+  border-radius: 8px;
+  color: white;
+  font-size: 0.95rem;
+  font-family: 'SF Mono', 'Monaco', 'Cascadia Code', monospace;
+}
+
+.path-input-container input:focus {
+  outline: none;
+  border-color: #646cff;
+}
+
 /* Index Status */
 .index-status {
   background: rgba(37, 38, 43, 0.6);

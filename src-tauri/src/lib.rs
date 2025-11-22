@@ -10,6 +10,8 @@ use fuzzy_matcher::FuzzyMatcher;
 use fuzzy_matcher::skim::SkimMatcherV2;
 use rayon::prelude::*;
 
+pub mod web_server;
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct IndexStats {
     pub total_files: usize,
@@ -24,7 +26,7 @@ pub struct FileIndex {
 }
 
 impl FileIndex {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             files: Arc::new(RwLock::new(Vec::new())),
             stats: Arc::new(RwLock::new(IndexStats {
@@ -408,6 +410,244 @@ async fn open_file(path: String, app: tauri::AppHandle) -> Result<(), String> {
 #[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
+}
+
+// Sync versions for web server
+pub fn build_index_sync(
+    root_path: String,
+    state: Arc<RwLock<FileIndex>>,
+    force_rebuild: bool,
+) -> Result<usize, String> {
+    // Try to load from cache first
+    if !force_rebuild {
+        if let Ok(cached) = load_index_from_disk() {
+            let count = cached.files.len();
+            *state.write().files.write() = cached.files;
+            *state.write().stats.write() = IndexStats {
+                total_files: count,
+                indexed: true,
+                last_indexed: Some(cached.timestamp),
+            };
+            return Ok(count);
+        }
+    }
+
+    // Build fresh index (same logic as build_index)
+    let file_list = Arc::new(parking_lot::Mutex::new(Vec::new()));
+    let counter = Arc::new(parking_lot::Mutex::new(0usize));
+    
+    let walker = WalkBuilder::new(&root_path)
+        .hidden(false)
+        .git_ignore(true)
+        .threads(8)
+        .filter_entry(|entry| {
+            let path_str = entry.path().to_string_lossy().to_lowercase();
+            let skip_patterns = [
+                "\\appdata\\local\\temp\\",
+                "\\appdata\\local\\cache\\",
+                "\\windows\\temp\\",
+                "\\$recycle.bin\\",
+                "\\system volume information\\",
+                "\\node_modules\\",
+                "\\.git\\",
+                "\\.cache\\",
+                "\\__pycache__\\",
+                "\\.venv\\",
+                "\\.virtualenv\\",
+                "\\target\\debug\\",
+                "\\target\\release\\",
+                "\\.idea\\",
+                "\\.vs\\",
+                "\\obj\\",
+                "\\bin\\debug\\",
+                "\\bin\\release\\",
+            ];
+            !skip_patterns.iter().any(|pattern| path_str.contains(pattern))
+        })
+        .build_parallel();
+
+    let file_list_clone = file_list.clone();
+    let counter_clone = counter.clone();
+    
+    walker.run(move || {
+        let file_list = file_list_clone.clone();
+        let counter = counter_clone.clone();
+        
+        Box::new(move |entry| {
+            if let Ok(entry) = entry {
+                if entry.file_type().map_or(false, |ft| ft.is_file()) {
+                    let path = entry.path().to_string_lossy().to_string();
+                    file_list.lock().push(path);
+                    
+                    let mut count = counter.lock();
+                    *count += 1;
+                }
+            }
+            ignore::WalkState::Continue
+        })
+    });
+    
+    let final_list = match Arc::try_unwrap(file_list) {
+        Ok(mutex) => mutex.into_inner(),
+        Err(arc) => arc.lock().clone(),
+    };
+    
+    let total = final_list.len();
+    
+    save_index_to_disk(&final_list).ok();
+    
+    *state.write().files.write() = final_list;
+    *state.write().stats.write() = IndexStats {
+        total_files: total,
+        indexed: true,
+        last_indexed: Some(chrono::Utc::now().to_rfc3339()),
+    };
+    
+    Ok(total)
+}
+
+pub fn search_index_sync(
+    query: String,
+    state: Arc<RwLock<FileIndex>>,
+) -> Result<Vec<String>, String> {
+    let files = state.read().files.read().clone();
+    
+    if query.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    
+    let is_regex = query.contains('\\') || query.contains('$') || query.contains('^') 
+        || query.contains('[') || query.contains('(');
+    
+    let mut scored_results: Vec<(String, i64)> = if is_regex {
+        let pattern = format!("(?i){}", query);
+        let regex = Regex::new(&pattern).map_err(|e| e.to_string())?;
+        files
+            .par_iter()
+            .filter_map(|path| {
+                if regex.is_match(path) || 
+                   Path::new(path)
+                       .file_name()
+                       .map(|f| regex.is_match(&f.to_string_lossy()))
+                       .unwrap_or(false) {
+                    Some((path.clone(), 1_000_000))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    } else {
+        let query_lower = query.to_lowercase();
+        let has_spaces = query.contains(' ');
+        let query_parts: Vec<&str> = if has_spaces {
+            query_lower.split_whitespace().collect()
+        } else {
+            vec![]
+        };
+        
+        let matcher = SkimMatcherV2::default()
+            .ignore_case()
+            .use_cache(true);
+        
+        files
+            .par_iter()
+            .filter_map(|path| {
+                let file_name = Path::new(path)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                
+                let file_name_lower = file_name.to_lowercase();
+                let path_lower = path.to_lowercase();
+                
+                // Multi-part path search
+                if has_spaces && query_parts.len() >= 2 {
+                    let all_parts_in_path = query_parts.iter().all(|part| path_lower.contains(part));
+                    
+                    if all_parts_in_path {
+                        let mut path_score = 300_000_000i64;
+                        let last_part = query_parts.last().unwrap();
+                        
+                        if file_name_lower == *last_part {
+                            path_score += 200_000_000;
+                        } else if file_name_lower.contains(last_part) {
+                            path_score += 100_000_000;
+                        }
+                        
+                        let mut last_pos = 0;
+                        let mut consecutive = true;
+                        for part in &query_parts {
+                            if let Some(pos) = path_lower[last_pos..].find(part) {
+                                last_pos += pos + part.len();
+                            } else {
+                                consecutive = false;
+                                break;
+                            }
+                        }
+                        
+                        if consecutive {
+                            path_score += 50_000_000;
+                        }
+                        
+                        return Some((path.clone(), path_score));
+                    }
+                }
+                
+                // Exact matches
+                if file_name_lower == query_lower {
+                    return Some((path.clone(), 1_000_000_000));
+                }
+                
+                if let Some((name, _)) = file_name_lower.rsplit_once('.') {
+                    if name == query_lower {
+                        return Some((path.clone(), 900_000_000));
+                    }
+                }
+                
+                if file_name_lower.contains(&query_lower) {
+                    let mut score = 500_000_000i64;
+                    
+                    if file_name_lower.starts_with(&query_lower) {
+                        score += 100_000_000;
+                    }
+                    
+                    let words: Vec<&str> = file_name_lower
+                        .split(|c: char| !c.is_alphanumeric())
+                        .filter(|w| !w.is_empty())
+                        .collect();
+                    
+                    if words.iter().any(|&w| w == query_lower.as_str()) {
+                        score += 50_000_000;
+                    }
+                    
+                    return Some((path.clone(), score));
+                }
+                
+                if query.len() <= 50 && !has_spaces {
+                    if let Some(fuzzy_score) = matcher.fuzzy_match(&file_name, &query) {
+                        if fuzzy_score > 0 {
+                            let capped_score = fuzzy_score.min(1_000_000);
+                            return Some((path.clone(), capped_score));
+                        }
+                    }
+                }
+                
+                None
+            })
+            .collect()
+    };
+    
+    scored_results.par_sort_unstable_by(|a, b| {
+        b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0))
+    });
+    
+    let results: Vec<String> = scored_results
+        .into_iter()
+        .take(2000)
+        .map(|(path, _)| path)
+        .collect();
+    
+    Ok(results)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

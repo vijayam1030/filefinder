@@ -14,6 +14,16 @@ edition = "2021"
 name = "tauri_app_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+# Desktop binary
+[[bin]]
+name = "tauri-app"
+path = "src/main.rs"
+
+# Web server binary
+[[bin]]
+name = "filefinder-web"
+path = "src/main_web.rs"
+
 [build-dependencies]
 tauri-build = { version = "2.0", features = [] }
 
@@ -32,3 +42,7 @@ tokio = { version = "1", features = ["rt-multi-thread"] }
 fuzzy-matcher = "0.3"
 sublime_fuzzy = "0.7"
 rayon = "1.8"
+actix-web = "4"
+actix-cors = "0.7"
+actix-files = "0.6"
+open = "5.0"

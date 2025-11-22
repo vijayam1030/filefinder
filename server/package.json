@@ -1,0 +1,17 @@
+{
+  "name": "filefinder-server",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "File finder backend API server",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "fuse.js": "^7.0.0",
+    "ignore": "^5.3.0"
+  }
+}
