@@ -33,10 +33,20 @@ impl FileIndex {
     }
 }
 
+// Cache version - increment this when filter logic changes
+const CACHE_VERSION: u32 = 2;
+
+#[derive(Serialize, Deserialize)]
+struct CachedIndex {
+    version: u32,
+    files: Vec<String>,
+    timestamp: String,
+}
+
 // Get cache file path
 fn get_cache_path() -> PathBuf {
     let cache_dir = dirs::cache_dir().unwrap_or_else(|| PathBuf::from("."));
-    cache_dir.join("filefinder").join("index.bin")
+    cache_dir.join("filefinder").join("index_v2.bin")
 }
 
 // Save index to disk
@@ -46,20 +56,33 @@ fn save_index_to_disk(files: &[String]) -> Result<(), String> {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     
-    let encoded = bincode::serialize(files).map_err(|e| e.to_string())?;
+    let cached = CachedIndex {
+        version: CACHE_VERSION,
+        files: files.to_vec(),
+        timestamp: chrono::Utc::now().to_rfc3339(),
+    };
+    
+    let encoded = bincode::serialize(&cached).map_err(|e| e.to_string())?;
     fs::write(&cache_path, encoded).map_err(|e| e.to_string())?;
     Ok(())
 }
 
 // Load index from disk
-fn load_index_from_disk() -> Result<Vec<String>, String> {
+fn load_index_from_disk() -> Result<CachedIndex, String> {
     let cache_path = get_cache_path();
     if !cache_path.exists() {
         return Err("Cache file not found".to_string());
     }
     
     let data = fs::read(&cache_path).map_err(|e| e.to_string())?;
-    bincode::deserialize(&data).map_err(|e| e.to_string())
+    let cached: CachedIndex = bincode::deserialize(&data).map_err(|e| e.to_string())?;
+    
+    // Check version compatibility
+    if cached.version != CACHE_VERSION {
+        return Err("Cache version mismatch".to_string());
+    }
+    
+    Ok(cached)
 }
 
 #[tauri::command]
@@ -69,13 +92,13 @@ async fn build_index(
     state: tauri::State<'_, FileIndex>,
 ) -> Result<usize, String> {
     // Try to load from cache first
-    if let Ok(cached_files) = load_index_from_disk() {
-        let count = cached_files.len();
-        *state.files.write() = cached_files;
+    if let Ok(cached) = load_index_from_disk() {
+        let count = cached.files.len();
+        *state.files.write() = cached.files;
         *state.stats.write() = IndexStats {
             total_files: count,
             indexed: true,
-            last_indexed: Some(chrono::Utc::now().to_rfc3339()),
+            last_indexed: Some(cached.timestamp),
         };
         app.emit("index-progress", count).ok();
         return Ok(count);
@@ -92,8 +115,36 @@ async fn build_index(
         
         let walker = WalkBuilder::new(&root_path)
             .hidden(false)
-            .git_ignore(false)
+            .git_ignore(true)  // Respect .gitignore to skip typical dev artifacts
             .threads(8)
+            .filter_entry(|entry| {
+                // Skip common cache/temp directories
+                let path_str = entry.path().to_string_lossy().to_lowercase();
+                
+                // Common Windows temp/cache patterns
+                let skip_patterns = [
+                    "\\appdata\\local\\temp\\",
+                    "\\appdata\\local\\cache\\",
+                    "\\windows\\temp\\",
+                    "\\$recycle.bin\\",
+                    "\\system volume information\\",
+                    "\\node_modules\\",
+                    "\\.git\\",
+                    "\\.cache\\",
+                    "\\__pycache__\\",
+                    "\\.venv\\",
+                    "\\.virtualenv\\",
+                    "\\target\\debug\\",
+                    "\\target\\release\\",
+                    "\\.idea\\",
+                    "\\.vs\\",
+                    "\\obj\\",
+                    "\\bin\\debug\\",
+                    "\\bin\\release\\",
+                ];
+                
+                !skip_patterns.iter().any(|pattern| path_str.contains(pattern))
+            })
             .build_parallel();
 
         let file_list_clone = file_list.clone();
