@@ -86,22 +86,42 @@ fn load_index_from_disk() -> Result<CachedIndex, String> {
 }
 
 #[tauri::command]
-async fn build_index(
-    root_path: String,
-    app: tauri::AppHandle,
-    state: tauri::State<'_, FileIndex>,
-) -> Result<usize, String> {
-    // Try to load from cache first
+async fn init_index(state: tauri::State<'_, FileIndex>) -> Result<Option<IndexStats>, String> {
+    // Try to silently load from cache on startup
     if let Ok(cached) = load_index_from_disk() {
         let count = cached.files.len();
         *state.files.write() = cached.files;
-        *state.stats.write() = IndexStats {
+        let stats = IndexStats {
             total_files: count,
             indexed: true,
             last_indexed: Some(cached.timestamp),
         };
-        app.emit("index-progress", count).ok();
-        return Ok(count);
+        *state.stats.write() = stats.clone();
+        return Ok(Some(stats));
+    }
+    Ok(None)
+}
+
+#[tauri::command]
+async fn build_index(
+    root_path: String,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, FileIndex>,
+    force_rebuild: Option<bool>,
+) -> Result<usize, String> {
+    // Try to load from cache first (unless force rebuild)
+    if !force_rebuild.unwrap_or(false) {
+        if let Ok(cached) = load_index_from_disk() {
+            let count = cached.files.len();
+            *state.files.write() = cached.files;
+            *state.stats.write() = IndexStats {
+                total_files: count,
+                indexed: true,
+                last_indexed: Some(cached.timestamp),
+            };
+            app.emit("index-progress", count).ok();
+            return Ok(count);
+        }
     }
 
     // Build fresh index
@@ -203,20 +223,124 @@ async fn search_index(
     query: String,
     state: tauri::State<'_, FileIndex>,
 ) -> Result<Vec<String>, String> {
-    let regex = Regex::new(&query).map_err(|e| e.to_string())?;
     let files = state.files.read();
     
-    let results: Vec<String> = files
-        .iter()
-        .filter(|path| {
-            if let Some(file_name) = Path::new(path).file_name() {
-                regex.is_match(&file_name.to_string_lossy())
-            } else {
-                false
-            }
-        })
+    // Check if query looks like regex (contains regex special chars)
+    let is_regex = query.contains('\\') || query.contains('$') || query.contains('^') 
+        || query.contains('[') || query.contains('(') || query.contains('.');
+    
+    let mut scored_results: Vec<(String, i32)> = if is_regex {
+        // Regex mode
+        let regex = Regex::new(&query).map_err(|e| e.to_string())?;
+        files
+            .iter()
+            .filter(|path| {
+                if let Some(file_name) = Path::new(path).file_name() {
+                    regex.is_match(&file_name.to_string_lossy())
+                } else {
+                    false
+                }
+            })
+            .map(|path| (path.clone(), 100)) // All regex matches get same score
+            .collect()
+    } else {
+        // Smart word-based search
+        let search_words: Vec<String> = query
+            .split_whitespace()
+            .map(|s| s.to_lowercase())
+            .collect();
+        
+        if search_words.is_empty() {
+            return Ok(Vec::new());
+        }
+        
+        files
+            .iter()
+            .filter_map(|path| {
+                let path_lower = path.to_lowercase();
+                let file_name = Path::new(path)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_lowercase())
+                    .unwrap_or_default();
+                
+                // Check if all words are present in the path
+                let all_words_present = search_words.iter().all(|word| path_lower.contains(word));
+                
+                if !all_words_present {
+                    return None;
+                }
+                
+                // Score the match
+                let mut score = 0;
+                
+                // Priority 1: All words in filename (highest priority)
+                let all_in_filename = search_words.iter().all(|word| file_name.contains(word));
+                if all_in_filename {
+                    score += 1000;
+                    
+                    // Bonus: Words appear in order
+                    let joined = search_words.join(" ");
+                    if file_name.contains(&joined) {
+                        score += 500; // Exact phrase match
+                    }
+                    
+                    // Bonus: Filename starts with first word
+                    if file_name.starts_with(&search_words[0]) {
+                        score += 200;
+                    }
+                }
+                
+                // Priority 2: Words appear in path components (folder structure)
+                let path_components: Vec<String> = Path::new(path)
+                    .components()
+                    .filter_map(|c| {
+                        if let std::path::Component::Normal(os_str) = c {
+                            Some(os_str.to_string_lossy().to_lowercase())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                
+                // Check if consecutive path components match consecutive search words
+                for i in 0..path_components.len() {
+                    for j in 0..search_words.len() {
+                        if i + j < path_components.len() 
+                           && path_components[i + j].contains(&search_words[j]) {
+                            score += 100; // Words in path structure
+                        }
+                    }
+                }
+                
+                // Bonus for exact component matches
+                for word in &search_words {
+                    for component in &path_components {
+                        if component == word {
+                            score += 150; // Exact folder/file name match
+                        }
+                    }
+                }
+                
+                // Only return if we have a positive score
+                if score > 0 {
+                    Some((path.clone(), score))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    };
+    
+    // Sort by score (descending), then alphabetically
+    scored_results.sort_by(|a, b| {
+        b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0))
+    });
+    
+    // Return top 2000 results
+    let results: Vec<String> = scored_results
+        .into_iter()
         .take(2000)
-        .cloned()
+        .map(|(path, _)| path)
         .collect();
     
     Ok(results)
@@ -248,6 +372,7 @@ pub fn run() {
         .manage(FileIndex::new())
         .invoke_handler(tauri::generate_handler![
             greet,
+            init_index,
             build_index,
             search_index,
             get_index_stats,

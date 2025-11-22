@@ -19,9 +19,9 @@ function App() {
   const [indexStats, setIndexStats] = useState<IndexStats | null>(null);
   const [rootPath] = useState("C:/"); // Default to C drive
 
-  // Load index stats on mount
+  // Load index on mount
   useEffect(() => {
-    loadIndexStats();
+    initIndex();
 
     // Listen for index progress events
     const unlistenProgress = listen<number>("index-progress", (event) => {
@@ -40,6 +40,17 @@ function App() {
     };
   }, []);
 
+  const initIndex = async () => {
+    try {
+      const stats = await invoke<IndexStats | null>("init_index");
+      if (stats) {
+        setIndexStats(stats);
+      }
+    } catch (error) {
+      console.error("Failed to init index", error);
+    }
+  };
+
   const loadIndexStats = async () => {
     try {
       const stats = await invoke<IndexStats>("get_index_stats");
@@ -49,11 +60,11 @@ function App() {
     }
   };
 
-  const buildIndex = async () => {
+  const buildIndex = async (forceRebuild = false) => {
     setIndexing(true);
     setIndexProgress(0);
     try {
-      await invoke("build_index", { rootPath });
+      await invoke("build_index", { rootPath, forceRebuild });
     } catch (error) {
       console.error("Indexing failed", error);
       setIndexing(false);
@@ -104,12 +115,12 @@ function App() {
                 </span>
               )}
             </div>
-            <button onClick={buildIndex} className="refresh-btn" title="Rebuild Index">
+            <button onClick={() => buildIndex(true)} className="refresh-btn" title="Rebuild Index">
               <RefreshCw size={14} />
             </button>
           </div>
         ) : (
-          <button onClick={buildIndex} className="build-index-btn">
+          <button onClick={() => buildIndex(false)} className="build-index-btn">
             <Database size={16} />
             Build Index
           </button>
