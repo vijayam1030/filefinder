@@ -96,7 +96,14 @@ function App() {
         ) : indexStats?.indexed ? (
           <div className="indexed-status">
             <Database size={16} />
-            <span>{indexStats.total_files.toLocaleString()} files indexed</span>
+            <div className="indexed-info">
+              <span>{indexStats.total_files.toLocaleString()} files indexed</span>
+              {indexStats.last_indexed && (
+                <span className="last-indexed">
+                  Last updated: {new Date(indexStats.last_indexed).toLocaleString()}
+                </span>
+              )}
+            </div>
             <button onClick={buildIndex} className="refresh-btn" title="Rebuild Index">
               <RefreshCw size={14} />
             </button>
@@ -150,7 +157,18 @@ function App() {
 
         {!searching &&
           results.map((path, index) => (
-            <div key={index} className="result-item" title={path}>
+            <div
+              key={index}
+              className="result-item"
+              title={path}
+              onClick={async () => {
+                try {
+                  await invoke("open_file", { path });
+                } catch (error) {
+                  console.error("Failed to open file:", error);
+                }
+              }}
+            >
               <File className="result-icon" size={16} />
               <span>{path}</span>
             </div>

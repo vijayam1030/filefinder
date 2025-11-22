@@ -177,6 +177,15 @@ async fn get_index_stats(state: tauri::State<'_, FileIndex>) -> Result<IndexStat
 }
 
 #[tauri::command]
+async fn open_file(path: String, app: tauri::AppHandle) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    app.opener()
+        .open_path(&path, None::<&str>)
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
 }
@@ -190,7 +199,8 @@ pub fn run() {
             greet,
             build_index,
             search_index,
-            get_index_stats
+            get_index_stats,
+            open_file
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

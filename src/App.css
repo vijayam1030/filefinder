@@ -22,7 +22,6 @@ body {
   width: 100%;
   justify-content: center;
   overflow: hidden;
-  /* Prevent body scroll, handle in container */
 }
 
 .container {
@@ -55,7 +54,6 @@ h1 {
 .search-input {
   width: 100%;
   padding: 1rem 1rem 1rem 3rem;
-  /* Space for icon */
   font-size: 1.2rem;
   border-radius: 12px;
   border: 1px solid #333;
@@ -170,6 +168,18 @@ h1 {
   align-items: center;
   gap: 0.5rem;
   color: #4ade80;
+}
+
+.indexed-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.last-indexed {
+  font-size: 0.75rem;
+  color: #888;
+  font-weight: normal;
 }
 
 .build-index-btn {
