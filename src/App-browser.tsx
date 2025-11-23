@@ -34,6 +34,7 @@ function App() {
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [results, setResults] = useState<FileResult[]>([]);
   const [displayResults, setDisplayResults] = useState<FileResult[]>([]);
+  const [displayQuery, setDisplayQuery] = useState("");
   const [searching, setSearching] = useState(false);
   const [indexing, setIndexing] = useState(false);
   const [indexStats, setIndexStats] = useState<IndexStats | null>(null);
@@ -47,6 +48,85 @@ function App() {
   
   const workerRef = useRef<Worker | null>(null);
   const fileIndexRef = useRef<string[]>([]);
+  const encryptionKeyRef = useRef<CryptoKey | null>(null);
+
+  // Generate or retrieve encryption key
+  const getEncryptionKey = async (): Promise<CryptoKey> => {
+    if (encryptionKeyRef.current) {
+      return encryptionKeyRef.current;
+    }
+
+    // Try to load existing key from localStorage
+    const storedKey = localStorage.getItem('encryptionKey');
+    
+    if (storedKey) {
+      // Import the key
+      const keyData = Uint8Array.from(atob(storedKey), c => c.charCodeAt(0));
+      const key = await crypto.subtle.importKey(
+        'raw',
+        keyData,
+        { name: 'AES-GCM', length: 256 },
+        true,
+        ['encrypt', 'decrypt']
+      );
+      encryptionKeyRef.current = key;
+      return key;
+    }
+
+    // Generate new key
+    const key = await crypto.subtle.generateKey(
+      { name: 'AES-GCM', length: 256 },
+      true,
+      ['encrypt', 'decrypt']
+    );
+
+    // Store key
+    const exportedKey = await crypto.subtle.exportKey('raw', key);
+    const keyArray = new Uint8Array(exportedKey);
+    const keyBase64 = btoa(String.fromCharCode(...keyArray));
+    localStorage.setItem('encryptionKey', keyBase64);
+
+    encryptionKeyRef.current = key;
+    return key;
+  };
+
+  // Encrypt data
+  const encryptData = async (data: any): Promise<string> => {
+    const key = await getEncryptionKey();
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const encodedData = new TextEncoder().encode(JSON.stringify(data));
+
+    const encryptedData = await crypto.subtle.encrypt(
+      { name: 'AES-GCM', iv },
+      key,
+      encodedData
+    );
+
+    // Combine IV and encrypted data
+    const combined = new Uint8Array(iv.length + encryptedData.byteLength);
+    combined.set(iv, 0);
+    combined.set(new Uint8Array(encryptedData), iv.length);
+
+    return btoa(String.fromCharCode(...combined));
+  };
+
+  // Decrypt data
+  const decryptData = async (encryptedString: string): Promise<any> => {
+    const key = await getEncryptionKey();
+    const combined = Uint8Array.from(atob(encryptedString), c => c.charCodeAt(0));
+
+    const iv = combined.slice(0, 12);
+    const encryptedData = combined.slice(12);
+
+    const decryptedData = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv },
+      key,
+      encryptedData
+    );
+
+    const decodedData = new TextDecoder().decode(decryptedData);
+    return JSON.parse(decodedData);
+  };
 
   // Check if File System Access API is supported
   const isFileSystemSupported = 'showDirectoryPicker' in window;
@@ -65,14 +145,25 @@ function App() {
         mode: 'read'
       });
       
+      // Prompt user for the full path (since browser can't access it for security)
+      const fullPath = prompt(
+        `Enter the full path to "${dirHandle.name}" folder (e.g., C:/Users/YourName/Projects/${dirHandle.name})`,
+        `C:/Users/User/${dirHandle.name}`
+      );
+      
+      if (!fullPath) {
+        setIndexing(false);
+        return;
+      }
+      
       setSelectedFolder(dirHandle.name);
       setIndexing(true);
       setIndexProgress(0);
       
-      // Send to worker for processing
+      // Send to worker for processing with full base path
       workerRef.current?.postMessage({
         type: 'INDEX_FILES',
-        data: { dirHandle, basePath: '' }
+        data: { dirHandle, basePath: fullPath.replace(/\\/g, '/') }
       });
       
     } catch (error: any) {
@@ -182,12 +273,15 @@ function App() {
       const store = tx.objectStore('fileIndex');
       const request = store.get('index');
       
-      const data: any = await new Promise((resolve, reject) => {
+      const encryptedData: any = await new Promise((resolve, reject) => {
         request.onsuccess = () => resolve(request.result);
         request.onerror = () => reject(request.error);
       });
       
-      if (data && data.files) {
+      if (encryptedData && encryptedData.encrypted) {
+        // Decrypt the data
+        const data = await decryptData(encryptedData.encrypted);
+        
         fileIndexRef.current = data.files;
         setIndexStats({
           total_files: data.files.length,
@@ -202,7 +296,7 @@ function App() {
         });
       }
     } catch (error) {
-      console.log('No previous index found');
+      console.log('No previous index found or decryption failed');
     }
   };
 
@@ -224,50 +318,65 @@ function App() {
 
   const saveIndexToDB = async (files: string[]) => {
     try {
+      const data = {
+        files,
+        timestamp: new Date().toISOString()
+      };
+      
+      // Encrypt the data
+      const encrypted = await encryptData(data);
+      
       const db = await openDB();
       const tx = db.transaction('fileIndex', 'readwrite');
       const store = tx.objectStore('fileIndex');
       
-      await store.put({
-        files,
-        timestamp: new Date().toISOString()
-      }, 'index');
+      await store.put({ encrypted }, 'index');
     } catch (error) {
       console.error('Error saving to IndexedDB:', error);
     }
   };
 
   // History management
-  const loadHistory = () => {
+  const loadHistory = async () => {
     try {
       const searchHist = localStorage.getItem('searchHistory');
       const indexHist = localStorage.getItem('indexHistory');
       
       if (searchHist) {
-        setSearchHistory(JSON.parse(searchHist));
+        try {
+          const decrypted = await decryptData(searchHist);
+          setSearchHistory(decrypted);
+        } catch {
+          // Fallback to unencrypted for backward compatibility
+          setSearchHistory(JSON.parse(searchHist));
+        }
       }
       if (indexHist) {
-        setIndexHistory(JSON.parse(indexHist));
+        try {
+          const decrypted = await decryptData(indexHist);
+          setIndexHistory(decrypted);
+        } catch {
+          // Fallback to unencrypted for backward compatibility
+          setIndexHistory(JSON.parse(indexHist));
+        }
       }
     } catch (error) {
       console.error('Error loading history:', error);
     }
   };
 
-  const addToSearchHistory = (item: SearchHistoryItem) => {
-    setSearchHistory(prev => {
-      const updated = [item, ...prev.filter(h => h.query !== item.query)].slice(0, 50);
-      localStorage.setItem('searchHistory', JSON.stringify(updated));
-      return updated;
-    });
+  const addToSearchHistory = async (item: SearchHistoryItem) => {
+    const updated = [item, ...searchHistory.filter(h => h.query !== item.query)].slice(0, 50);
+    const encrypted = await encryptData(updated);
+    localStorage.setItem('searchHistory', encrypted);
+    setSearchHistory(updated);
   };
 
-  const addToIndexHistory = (item: IndexHistoryItem) => {
-    setIndexHistory(prev => {
-      const updated = [item, ...prev.filter(h => h.folderPath !== item.folderPath)].slice(0, 20);
-      localStorage.setItem('indexHistory', JSON.stringify(updated));
-      return updated;
-    });
+  const addToIndexHistory = async (item: IndexHistoryItem) => {
+    const updated = [item, ...indexHistory.filter(h => h.folderPath !== item.folderPath)].slice(0, 20);
+    const encrypted = await encryptData(updated);
+    localStorage.setItem('indexHistory', encrypted);
+    setIndexHistory(updated);
   };
 
   const clearSearchHistory = () => {
@@ -306,10 +415,15 @@ function App() {
 
   // Update display results only after search completes (prevent glitching)
   useEffect(() => {
-    if (!searching) {
-      setDisplayResults(results);
+    if (!searching && results.length >= 0) {
+      // Small delay to ensure smooth transition
+      const timer = setTimeout(() => {
+        setDisplayResults(results);
+        setDisplayQuery(debouncedQuery);
+      }, 50);
+      return () => clearTimeout(timer);
     }
-  }, [searching, results]);
+  }, [searching, results, debouncedQuery]);
 
   // Search when debounced query changes
   useEffect(() => {
@@ -325,7 +439,9 @@ function App() {
   const copyToClipboard = async (path: string, e: React.MouseEvent) => {
     e.stopPropagation();
     try {
-      await navigator.clipboard.writeText(path);
+      // Convert forward slashes back to backslashes for Windows
+      const windowsPath = path.replace(/\//g, '\\');
+      await navigator.clipboard.writeText(windowsPath);
       setCopiedPath(path);
       setTimeout(() => setCopiedPath(null), 2000);
       
@@ -573,8 +689,8 @@ function App() {
       {/* Results Header - always show when indexed to prevent layout shift */}
       {indexStats?.indexed && (
         <div className="results-header">
-          {query && displayResults.length > 0 ? (
-            <span className="results-count fade-in">
+          {displayQuery && displayResults.length > 0 ? (
+            <span className="results-count">
               <Database size={16} />
               {displayResults.length > 100 ? `Showing 100 of ${displayResults.length.toLocaleString()}` : `${displayResults.length.toLocaleString()} results`} • {searchTime.toFixed(1)}ms
             </span>
@@ -597,7 +713,7 @@ function App() {
           </div>
         )}
 
-        {!searching && displayResults.length === 0 && query && indexStats?.indexed && (
+        {!searching && displayResults.length === 0 && displayQuery && indexStats?.indexed && (
           <div className="empty-state">
             <p style={{ fontSize: "1.125rem", color: "#888" }}>No results found</p>
             <p style={{ fontSize: "0.875rem", color: "#666" }}>
@@ -616,7 +732,7 @@ function App() {
               {getFileIcon(fileResult.extension)}
               <div className="result-content">
                 <div className="result-path">
-                  {highlightMatch(fileResult.path, debouncedQuery)}
+                  {highlightMatch(fileResult.path, displayQuery)}
                 </div>
                 <div className="result-details">
                   <span className="result-badge">

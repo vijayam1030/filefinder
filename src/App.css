@@ -382,6 +382,11 @@ h1 {
   max-height: 600px;
   height: 600px;
   contain: layout style paint;
+  will-change: contents;
+}
+
+.results-list > * {
+  transition: none;
 }
 
 .result-item {
