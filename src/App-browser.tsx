@@ -356,6 +356,56 @@ function App() {
     return `${diffDays}d ago`;
   };
 
+  // Highlight matching parts in text
+  const highlightMatch = (text: string, query: string) => {
+    if (!query.trim()) return <>{text}</>;
+    
+    const parts = query.toLowerCase().split(/\s+/);
+    let result: React.ReactNode[] = [];
+    let lastIndex = 0;
+    const textLower = text.toLowerCase();
+    
+    // Find all matches
+    const matches: Array<{start: number, end: number}> = [];
+    parts.forEach(part => {
+      let index = 0;
+      while ((index = textLower.indexOf(part, index)) !== -1) {
+        matches.push({ start: index, end: index + part.length });
+        index += part.length;
+      }
+    });
+    
+    // Sort and merge overlapping matches
+    matches.sort((a, b) => a.start - b.start);
+    const merged: Array<{start: number, end: number}> = [];
+    matches.forEach(match => {
+      if (merged.length === 0 || merged[merged.length - 1].end < match.start) {
+        merged.push(match);
+      } else {
+        merged[merged.length - 1].end = Math.max(merged[merged.length - 1].end, match.end);
+      }
+    });
+    
+    // Build highlighted text
+    merged.forEach((match, idx) => {
+      if (match.start > lastIndex) {
+        result.push(<span key={`text-${idx}`}>{text.substring(lastIndex, match.start)}</span>);
+      }
+      result.push(
+        <mark key={`mark-${idx}`} className="highlight">
+          {text.substring(match.start, match.end)}
+        </mark>
+      );
+      lastIndex = match.end;
+    });
+    
+    if (lastIndex < text.length) {
+      result.push(<span key="text-end">{text.substring(lastIndex)}</span>);
+    }
+    
+    return <>{result}</>;
+  };
+
   return (
     <main className="container">
       <div className="header">
@@ -544,7 +594,9 @@ function App() {
             >
               {getFileIcon(fileResult.extension)}
               <div className="result-content">
-                <div className="result-path">{fileResult.path}</div>
+                <div className="result-path">
+                  {highlightMatch(fileResult.path, debouncedQuery)}
+                </div>
                 <div className="result-details">
                   <span className="result-badge">
                     <Folder size={12} />

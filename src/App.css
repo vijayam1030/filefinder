@@ -473,6 +473,15 @@ h1 {
   color: inherit;
 }
 
+.result-path .highlight {
+  background: rgba(100, 108, 255, 0.3);
+  color: #a8aeff;
+  font-weight: 600;
+  padding: 0.1rem 0.2rem;
+  border-radius: 3px;
+  border: 1px solid rgba(100, 108, 255, 0.4);
+}
+
 .result-details {
   display: flex;
   align-items: center;
