@@ -19,6 +19,7 @@ interface SearchHistoryItem {
   query: string;
   timestamp: string;
   resultCount: number;
+  copiedPath: string;
 }
 
 interface IndexHistoryItem {
@@ -124,16 +125,6 @@ function App() {
           });
           setIndexing(false);
           saveIndexToDB(data.files);
-          
-          // Add to index history
-          if (selectedFolder) {
-            addToIndexHistory({
-              folderName: selectedFolder,
-              folderPath: selectedFolder,
-              timestamp,
-              fileCount: data.totalFiles
-            });
-          }
           break;
         
         case 'INDEX_ERROR':
@@ -162,6 +153,18 @@ function App() {
       workerRef.current?.terminate();
     };
   }, []);
+
+  // Track when indexing completes and add to history
+  useEffect(() => {
+    if (indexStats?.indexed && indexStats.last_indexed && selectedFolder && !indexing) {
+      addToIndexHistory({
+        folderName: selectedFolder,
+        folderPath: selectedFolder,
+        timestamp: indexStats.last_indexed,
+        fileCount: indexStats.total_files
+      });
+    }
+  }, [indexStats?.indexed, indexStats?.last_indexed]);
 
   const loadIndexFromDB = async () => {
     try {
@@ -315,7 +318,8 @@ function App() {
         addToSearchHistory({
           query: debouncedQuery,
           timestamp: new Date().toISOString(),
-          resultCount: results.length
+          resultCount: results.length,
+          copiedPath: path
         });
       }
     } catch (error) {
@@ -590,6 +594,12 @@ function App() {
                     <div className="history-meta">
                       <span className="result-badge">{item.resultCount} results</span>
                     </div>
+                    {item.copiedPath && (
+                      <div className="history-path">
+                        <File size={14} />
+                        <span className="path-text">{item.copiedPath}</span>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>

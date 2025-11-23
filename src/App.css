@@ -770,6 +770,25 @@ h1 {
   gap: 0.5rem;
 }
 
+.history-path {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid rgba(100, 108, 255, 0.1);
+  font-size: 0.85rem;
+  color: #8b92ff;
+  opacity: 0.8;
+}
+
+.history-path .path-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: 'Courier New', monospace;
+}
+
 .empty-state {
   display: flex;
   flex-direction: column;
