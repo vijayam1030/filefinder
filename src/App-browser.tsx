@@ -33,6 +33,7 @@ function App() {
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [results, setResults] = useState<FileResult[]>([]);
+  const [displayResults, setDisplayResults] = useState<FileResult[]>([]);
   const [searching, setSearching] = useState(false);
   const [indexing, setIndexing] = useState(false);
   const [indexStats, setIndexStats] = useState<IndexStats | null>(null);
@@ -295,13 +296,20 @@ function App() {
     });
   };
 
-  // Debounce - increase to 300ms for smoother typing
+  // Debounce - increase to 400ms for smoother typing
   useEffect(() => {
     const timer = setTimeout(() => {
       setDebouncedQuery(query);
-    }, 300);
+    }, 400);
     return () => clearTimeout(timer);
   }, [query]);
+
+  // Update display results only after search completes (prevent glitching)
+  useEffect(() => {
+    if (!searching) {
+      setDisplayResults(results);
+    }
+  }, [searching, results]);
 
   // Search when debounced query changes
   useEffect(() => {
@@ -565,10 +573,10 @@ function App() {
       {/* Results Header - always show when indexed to prevent layout shift */}
       {indexStats?.indexed && (
         <div className="results-header">
-          {query && results.length > 0 ? (
+          {query && displayResults.length > 0 ? (
             <span className="results-count fade-in">
               <Database size={16} />
-              {results.length > 100 ? `Showing 100 of ${results.length.toLocaleString()}` : `${results.length.toLocaleString()} results`} • {searchTime.toFixed(1)}ms
+              {displayResults.length > 100 ? `Showing 100 of ${displayResults.length.toLocaleString()}` : `${displayResults.length.toLocaleString()} results`} • {searchTime.toFixed(1)}ms
             </span>
           ) : (
             <span style={{ opacity: 0 }}>Placeholder</span>
@@ -589,7 +597,7 @@ function App() {
           </div>
         )}
 
-        {!searching && results.length === 0 && query && indexStats?.indexed && (
+        {!searching && displayResults.length === 0 && query && indexStats?.indexed && (
           <div className="empty-state">
             <p style={{ fontSize: "1.125rem", color: "#888" }}>No results found</p>
             <p style={{ fontSize: "0.875rem", color: "#666" }}>
@@ -599,7 +607,7 @@ function App() {
         )}
 
         {!searching &&
-          results.slice(0, 100).map((fileResult, index) => (
+          displayResults.slice(0, 100).map((fileResult, index) => (
             <div
               key={index}
               className="result-item"
