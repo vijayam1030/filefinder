@@ -364,28 +364,34 @@ function App() {
       const parts = query.toLowerCase().split(/\s+/).filter(p => p.length > 0);
       const textLower = text.toLowerCase();
       
-      // Find all match positions
-      const positions: Array<{start: number, end: number}> = [];
+      // Colors for different search terms
+      const colors = ['highlight-1', 'highlight-2', 'highlight-3', 'highlight-4'];
       
-      parts.forEach(part => {
+      // Find all match positions with their word index
+      const positions: Array<{start: number, end: number, colorClass: string}> = [];
+      
+      parts.forEach((part, partIndex) => {
         let index = 0;
+        const colorClass = colors[partIndex % colors.length];
         while ((index = textLower.indexOf(part, index)) !== -1) {
-          positions.push({ start: index, end: index + part.length });
+          positions.push({ start: index, end: index + part.length, colorClass });
           index++;
         }
       });
       
       if (positions.length === 0) return text;
       
-      // Sort and merge overlapping ranges
+      // Sort by start position
       positions.sort((a, b) => a.start - b.start);
-      const merged: Array<{start: number, end: number}> = [];
+      
+      // Merge overlapping ranges (keep first color)
+      const merged: Array<{start: number, end: number, colorClass: string}> = [];
       
       positions.forEach(pos => {
         if (merged.length === 0 || merged[merged.length - 1].end < pos.start) {
           merged.push(pos);
-        } else {
-          merged[merged.length - 1].end = Math.max(merged[merged.length - 1].end, pos.end);
+        } else if (pos.end > merged[merged.length - 1].end) {
+          merged[merged.length - 1].end = pos.end;
         }
       });
       
@@ -398,7 +404,7 @@ function App() {
           result.push(text.substring(lastIndex, pos.start));
         }
         result.push(
-          <mark key={idx} className="highlight">
+          <mark key={idx} className={`highlight ${pos.colorClass}`}>
             {text.substring(pos.start, pos.end)}
           </mark>
         );

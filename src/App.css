@@ -482,6 +482,30 @@ h1 {
   border: 1px solid rgba(100, 108, 255, 0.4);
 }
 
+.result-path .highlight.highlight-1 {
+  background: rgba(100, 108, 255, 0.3);
+  color: #a8aeff;
+  border-color: rgba(100, 108, 255, 0.5);
+}
+
+.result-path .highlight.highlight-2 {
+  background: rgba(236, 72, 153, 0.3);
+  color: #f9a8d4;
+  border-color: rgba(236, 72, 153, 0.5);
+}
+
+.result-path .highlight.highlight-3 {
+  background: rgba(34, 197, 94, 0.3);
+  color: #86efac;
+  border-color: rgba(34, 197, 94, 0.5);
+}
+
+.result-path .highlight.highlight-4 {
+  background: rgba(251, 146, 60, 0.3);
+  color: #fdba74;
+  border-color: rgba(251, 146, 60, 0.5);
+}
+
 .result-details {
   display: flex;
   align-items: center;
