@@ -1,8 +1,6 @@
 import { useState, useEffect, useRef } from "react";
-import { Search, File, Loader2, RefreshCw, Database, Zap, HardDrive, Clock, Folder, FileText, Copy } from "lucide-react";
+import { Search, File, Loader2, RefreshCw, Database, Zap, HardDrive, Clock, Folder, FileText, Copy, FolderOpen } from "lucide-react";
 import "./App.css";
-
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
 interface IndexStats {
   total_files: number;
@@ -25,11 +23,41 @@ function App() {
   const [indexing, setIndexing] = useState(false);
   const [indexStats, setIndexStats] = useState<IndexStats | null>(null);
   const [searchTime, setSearchTime] = useState(0);
-  const [rootPath, setRootPath] = useState("C:/");
   const [copiedPath, setCopiedPath] = useState<string | null>(null);
-  const searchAbortController = useRef<AbortController | null>(null);
+  const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
+  const [indexProgress, setIndexProgress] = useState(0);
+  
+  const workerRef = useRef<Worker | null>(null);
+  const fileIndexRef = useRef<string[]>([]);
 
   // Parse file path into structured data
+  // Select folder and index files using File System Access API
+  const selectAndIndexFolder = async () => {
+    try {
+      // @ts-ignore - File System Access API
+      const dirHandle = await window.showDirectoryPicker({
+        mode: 'read'
+      });
+      
+      setSelectedFolder(dirHandle.name);
+      setIndexing(true);
+      setIndexProgress(0);
+      
+      // Send to worker for processing
+      workerRef.current?.postMessage({
+        type: 'INDEX_FILES',
+        data: { dirHandle, basePath: '' }
+      });
+      
+    } catch (error: any) {
+      if (error.name !== 'AbortError') {
+        console.error('Error indexing:', error);
+        alert('Error: ' + error.message);
+      }
+      setIndexing(false);
+    }
+  };
+
   const parseFilePath = (path: string): FileResult => {
     const normalizedPath = path.replace(/\\/g, '/');
     const parts = normalizedPath.split('/');
@@ -54,93 +82,142 @@ function App() {
     return <File className="result-icon" size={22} />;
   };
 
+  // Load index from IndexedDB on mount
   useEffect(() => {
-    loadIndexStats();
+    // Initialize Web Worker
+    workerRef.current = new Worker(new URL('./indexWorker.ts', import.meta.url), {
+      type: 'module'
+    });
+    
+    // Handle worker messages
+    workerRef.current.onmessage = (e: MessageEvent) => {
+      const { type, data } = e.data;
+      
+      switch (type) {
+        case 'INDEX_PROGRESS':
+          setIndexProgress(data.filesIndexed);
+          break;
+        
+        case 'INDEX_COMPLETE':
+          fileIndexRef.current = data.files;
+          setIndexStats({
+            total_files: data.totalFiles,
+            indexed: true,
+            last_indexed: new Date().toISOString()
+          });
+          setIndexing(false);
+          saveIndexToDB(data.files);
+          break;
+        
+        case 'INDEX_ERROR':
+          console.error('Indexing error:', data.error);
+          setIndexing(false);
+          alert('Error indexing: ' + data.error);
+          break;
+        
+        case 'SEARCH_COMPLETE':
+          const parsedResults = data.results.map(parseFilePath);
+          setResults(parsedResults);
+          setSearchTime(data.searchTime);
+          setSearching(false);
+          break;
+        
+        case 'INDEX_LOADED':
+          setIndexStats(prev => prev ? { ...prev, indexed: true } : null);
+          break;
+      }
+    };
+    
+    loadIndexFromDB();
+    
+    return () => {
+      workerRef.current?.terminate();
+    };
   }, []);
 
-  const loadIndexStats = async () => {
+  const loadIndexFromDB = async () => {
     try {
-      const response = await fetch(`${API_URL}/api/index-stats`);
-      const stats = await response.json();
-      setIndexStats(stats);
-    } catch (error) {
-      console.error("Failed to load index stats", error);
-    }
-  };
-
-  const buildIndex = async (forceRebuild = false) => {
-    setIndexing(true);
-    try {
-      const response = await fetch(`${API_URL}/api/build-index`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rootPath, forceRebuild })
+      const db = await openDB();
+      const tx = db.transaction('fileIndex', 'readonly');
+      const store = tx.objectStore('fileIndex');
+      const request = store.get('index');
+      
+      const data: any = await new Promise((resolve, reject) => {
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
       });
       
-      const result = await response.json();
-      setIndexStats({
-        total_files: result.totalFiles,
-        indexed: true,
-        last_indexed: result.lastIndexed
-      });
-    } catch (error) {
-      console.error("Indexing failed", error);
-    } finally {
-      setIndexing(false);
-    }
-  };
-
-  const performSearch = async (searchQuery: string) => {
-    // Cancel any ongoing search
-    if (searchAbortController.current) {
-      searchAbortController.current.abort();
-    }
-    
-    if (searchQuery.length > 0 && indexStats?.indexed) {
-      setSearching(true);
-      searchAbortController.current = new AbortController();
-      
-      try {
-        const response = await fetch(`${API_URL}/api/search`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ query: searchQuery }),
-          signal: searchAbortController.current.signal
+      if (data && data.files) {
+        fileIndexRef.current = data.files;
+        setIndexStats({
+          total_files: data.files.length,
+          indexed: true,
+          last_indexed: data.timestamp
         });
         
-        const data = await response.json();
-        
-        // Check if this search was cancelled
-        if (searchAbortController.current?.signal.aborted) {
-          return;
-        }
-        
-        setSearchTime(data.searchTime);
-        // Parse results into structured data
-        const parsedResults = data.results.map((path: string) => parseFilePath(path));
-        setResults(parsedResults);
-      } catch (error: any) {
-        if (error.name === 'AbortError') {
-          return; // Ignore cancelled requests
-        }
-        console.error("Search failed", error);
-        setResults([]);
-      } finally {
-        setSearching(false);
+        // Load into worker
+        workerRef.current?.postMessage({
+          type: 'LOAD_INDEX',
+          data: { files: data.files }
+        });
       }
-    } else {
-      setResults([]);
-      setSearchTime(0);
-      setSearching(false);
+    } catch (error) {
+      console.log('No previous index found');
     }
   };
 
-  // Debounce the query separately from the input
+  const openDB = (): Promise<IDBDatabase> => {
+    return new Promise((resolve, reject) => {
+      const request = indexedDB.open('FileFinderDB', 1);
+      
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => resolve(request.result);
+      
+      request.onupgradeneeded = (event) => {
+        const db = (event.target as IDBOpenDBRequest).result;
+        if (!db.objectStoreNames.contains('fileIndex')) {
+          db.createObjectStore('fileIndex');
+        }
+      };
+    });
+  };
+
+  const saveIndexToDB = async (files: string[]) => {
+    try {
+      const db = await openDB();
+      const tx = db.transaction('fileIndex', 'readwrite');
+      const store = tx.objectStore('fileIndex');
+      
+      await store.put({
+        files,
+        timestamp: new Date().toISOString()
+      }, 'index');
+    } catch (error) {
+      console.error('Error saving to IndexedDB:', error);
+    }
+  };
+
+  const performSearch = (searchQuery: string) => {
+    if (!searchQuery || fileIndexRef.current.length === 0) {
+      setResults([]);
+      setSearching(false);
+      return;
+    }
+
+    setSearching(true);
+    
+    // Send to worker for processing
+    workerRef.current?.postMessage({
+      type: 'SEARCH',
+      data: { query: searchQuery }
+    });
+  };
+
+  // Debounce
   useEffect(() => {
     const timer = setTimeout(() => {
       setDebouncedQuery(query);
-    }, 250);
-
+    }, 200);
     return () => clearTimeout(timer);
   }, [query]);
 
@@ -152,19 +229,9 @@ function App() {
       setSearching(false);
       return;
     }
+    performSearch(debouncedQuery);
+  }, [debouncedQuery]);
 
-    if (indexStats?.indexed) {
-      performSearch(debouncedQuery);
-    }
-  }, [debouncedQuery, indexStats]);
-
-  // Manual search trigger (Enter key or button)
-  const handleSearch = (e?: React.FormEvent) => {
-    e?.preventDefault();
-    performSearch(query);
-  };
-
-  // Copy path to clipboard
   const copyToClipboard = async (path: string, e: React.MouseEvent) => {
     e.stopPropagation();
     try {
@@ -174,16 +241,6 @@ function App() {
     } catch (error) {
       console.error("Failed to copy:", error);
     }
-  };
-
-  const openFile = (path: string) => {
-    // For browser version, copy path automatically
-    navigator.clipboard.writeText(path).then(() => {
-      setCopiedPath(path);
-      setTimeout(() => setCopiedPath(null), 3000);
-    }).catch(err => {
-      console.error("Failed to copy:", err);
-    });
   };
 
   const formatBytes = (bytes: number) => {
@@ -212,9 +269,9 @@ function App() {
       <div className="header">
         <h1>
           <Zap size={32} />
-          Antigravity Search (Web)
+          Antigravity Search
         </h1>
-        <div className="app-version">v2.0.0 • Browser</div>
+        <div className="app-version">v3.0.0 • Pure Browser</div>
       </div>
 
       {/* Stats Grid */}
@@ -229,11 +286,11 @@ function App() {
           </div>
 
           <div className="stat-card">
-            <div className="stat-label">Index Size</div>
+            <div className="stat-label">Storage</div>
             <div className="stat-value">
               {formatBytes(indexStats.total_files)}
             </div>
-            <div className="stat-subtitle">in server memory</div>
+            <div className="stat-subtitle">in browser cache</div>
           </div>
 
           {searchTime > 0 && (
@@ -254,25 +311,12 @@ function App() {
                 {formatTime(indexStats.last_indexed)}
               </div>
               <div className="stat-subtitle">
-                {new Date(indexStats.last_indexed).toLocaleString()}
+                {selectedFolder || 'Local folder'}
               </div>
             </div>
           )}
         </div>
       )}
-
-      {/* Root Path Input */}
-      <div className="path-input-container fade-in">
-        <label htmlFor="rootPath">Index Path:</label>
-        <input
-          id="rootPath"
-          type="text"
-          value={rootPath}
-          onChange={(e) => setRootPath(e.target.value)}
-          placeholder="Enter path to index (e.g., C:/ or /home/user)"
-          disabled={indexing}
-        />
-      </div>
 
       {/* Index Status */}
       <div className="index-status fade-in">
@@ -285,7 +329,7 @@ function App() {
               <div className="progress-text">Indexing in progress...</div>
               <div className="last-indexed">
                 <HardDrive size={14} />
-                Building file index...
+                {indexProgress.toLocaleString()} files scanned...
               </div>
             </div>
           </div>
@@ -303,21 +347,21 @@ function App() {
                 </div>
               </div>
             </div>
-            <button onClick={() => buildIndex(true)} className="refresh-btn">
+            <button onClick={selectAndIndexFolder} className="refresh-btn">
               <RefreshCw size={16} />
-              Rebuild
+              Re-index
             </button>
           </>
         ) : (
-          <button onClick={() => buildIndex(false)} className="build-index-btn">
-            <Database size={18} />
-            Build Index
+          <button onClick={selectAndIndexFolder} className="build-index-btn">
+            <FolderOpen size={18} />
+            Select Folder to Index
           </button>
         )}
       </div>
 
       {/* Search Input */}
-      <form onSubmit={handleSearch} className="search-container">
+      <form onSubmit={(e) => e.preventDefault()} className="search-container">
         <Search className="search-icon" size={22} />
         <input
           className="search-input"
@@ -325,20 +369,12 @@ function App() {
           onChange={(e) => setQuery(e.target.value)}
           placeholder={
             indexStats?.indexed
-              ? 'Super flexible search: try "app config", "appconfig", "app-config", or "spring Application.java"...'
-              : "Build index to start searching"
+              ? 'Search: "Integer.java" or "spring Application.java"...'
+              : "Select a folder to start indexing"
           }
           disabled={!indexStats?.indexed || indexing}
           autoFocus={indexStats?.indexed}
         />
-        <button
-          type="submit"
-          className="search-btn"
-          disabled={!indexStats?.indexed || indexing || !query}
-          title="Search (Enter)"
-        >
-          <Search size={18} />
-        </button>
       </form>
 
       {/* Results */}
@@ -361,12 +397,12 @@ function App() {
 
         {!searching && !indexStats?.indexed && !indexing && (
           <div className="empty-state">
-            <Database size={64} style={{ opacity: 0.3 }} />
+            <FolderOpen size={64} style={{ opacity: 0.3 }} />
             <p style={{ fontSize: "1.125rem", color: "#888" }}>
-              Click "Build Index" to start indexing your files
+              Click "Select Folder to Index" to get started
             </p>
             <p style={{ fontSize: "0.875rem", color: "#666" }}>
-              First-time indexing may take 30-60 seconds for a full drive scan
+              Your browser will ask permission to access the folder
             </p>
           </div>
         )}
@@ -375,7 +411,7 @@ function App() {
           <div className="empty-state">
             <p style={{ fontSize: "1.125rem", color: "#888" }}>No results found</p>
             <p style={{ fontSize: "0.875rem", color: "#666" }}>
-              Try a different search term or pattern
+              Try a different search term
             </p>
           </div>
         )}
@@ -385,7 +421,7 @@ function App() {
             <div
               key={index}
               className="result-item"
-              onClick={() => openFile(fileResult.path)}
+              onClick={(e) => copyToClipboard(fileResult.path, e)}
             >
               {getFileIcon(fileResult.extension)}
               <div className="result-content">
@@ -403,7 +439,7 @@ function App() {
                   <button
                     className="copy-btn"
                     onClick={(e) => copyToClipboard(fileResult.path, e)}
-                    title="Copy path to clipboard"
+                    title="Copy path"
                   >
                     <Copy size={14} />
                     {copiedPath === fileResult.path ? '✓ Copied!' : 'Copy'}
@@ -415,7 +451,7 @@ function App() {
       </div>
 
       <div className="footer">
-        Searching in <strong>{rootPath}</strong> • Results limited to 2,000 files • Browser Mode
+        100% Browser-Based • No Backend Required • Data Stored Locally
       </div>
     </main>
   );

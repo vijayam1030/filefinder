@@ -16,6 +16,9 @@ const PORT = process.env.PORT || 3001;
 app.use(cors());
 app.use(express.json());
 
+// Serve static frontend files (after building)
+app.use(express.static(path.join(__dirname, '../dist')));
+
 // In-memory cache for file index
 let fileIndex = {
   files: [],
@@ -292,6 +295,11 @@ app.get('/api/index-stats', (req, res) => {
 // Health check
 app.get('/health', (req, res) => {
   res.json({ status: 'ok' });
+});
+
+// Serve frontend for all other routes (SPA fallback)
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, '../dist/index.html'));
 });
 
 app.listen(PORT, () => {

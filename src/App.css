@@ -379,6 +379,19 @@ h1 {
   overflow: hidden;
 }
 
+.result-item::after {
+  content: 'Click to copy path';
+  position: absolute;
+  right: 1.5rem;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 0.75rem;
+  color: #666;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  pointer-events: none;
+}
+
 .result-item::before {
   content: '';
   position: absolute;
@@ -392,6 +405,10 @@ h1 {
 }
 
 .result-item:hover::before {
+  opacity: 1;
+}
+
+.result-item:hover::after {
   opacity: 1;
 }
 
@@ -481,6 +498,7 @@ h1 {
   color: #4ade80;
   font-weight: 600;
   margin-left: auto;
+  white-space: nowrap;
 }
 
 .copy-btn:hover {
@@ -491,6 +509,18 @@ h1 {
 
 .copy-btn:active {
   transform: scale(0.95);
+}
+
+/* Toast notification for copied */
+@keyframes slideInRight {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
 }
 
 .loading,
