@@ -482,6 +482,9 @@ function App() {
     return `${diffDays}d ago`;
   };
 
+  // Convert forward slashes to backslashes for Windows display
+  const toWindowsPath = (path: string) => path.replace(/\//g, '\\');
+
   // Highlight matching parts in text (optimized with useMemo)
   const highlightMatch = useMemo(() => {
     return (text: string, query: string) => {
@@ -550,9 +553,9 @@ function App() {
       <div className="header">
         <h1>
           <Zap size={32} />
-          Antigravity Search
+          File Search
         </h1>
-        <div className="app-version">v3.0.0 • Pure Browser</div>
+        <div className="app-version">v3.0.0 • Lightning Fast</div>
       </div>
 
       {/* Tabs */}
@@ -734,12 +737,12 @@ function App() {
               {getFileIcon(fileResult.extension)}
               <div className="result-content">
                 <div className="result-path">
-                  {highlightMatch(fileResult.path, displayQuery)}
+                  {highlightMatch(toWindowsPath(fileResult.path), displayQuery)}
                 </div>
                 <div className="result-details">
                   <span className="result-badge">
                     <Folder size={12} />
-                    {fileResult.directory.split('/').slice(-2).join('/') || '/'}
+                    {toWindowsPath(fileResult.directory).split('\\').slice(-2).join('\\') || '\\'}
                   </span>
                   {fileResult.extension && (
                     <span className="result-badge">
