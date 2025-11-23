@@ -33,11 +33,12 @@ async function indexFiles(dirHandle: any, basePath: string = '') {
     
     // Create Fuse instance for fast searching
     fuseInstance = new Fuse(files, {
-      threshold: 0.3,
+      threshold: 0.4,
       location: 0,
       distance: 100,
-      minMatchCharLength: 2,
-      ignoreLocation: false,
+      minMatchCharLength: 1,
+      ignoreLocation: true,
+      keys: ['$']
     });
     
     self.postMessage({
@@ -108,11 +109,12 @@ async function scanDirectory(
 function loadIndex(files: string[]) {
   fileIndex = files;
   fuseInstance = new Fuse(files, {
-    threshold: 0.3,
+    threshold: 0.4,
     location: 0,
     distance: 100,
-    minMatchCharLength: 2,
-    ignoreLocation: false,
+    minMatchCharLength: 1,
+    ignoreLocation: true,
+    keys: ['$']
   });
   
   self.postMessage({
@@ -137,46 +139,61 @@ function performSearch(query: string) {
   let results: string[] = [];
   
   if (hasSpaces) {
-    // Multi-part path search
+    // Multi-part path search - score based on how many parts match
     const parts = queryLower.split(/\s+/);
-    results = fileIndex.filter(path => {
-      const pathLower = path.toLowerCase();
-      return parts.every(part => pathLower.includes(part));
-    }).slice(0, 500); // Reduced from 2000
-  } else {
-    // Exact matches first
-    const exactMatches: string[] = [];
-    const substringMatches: string[] = [];
+    const pathsWithScore = fileIndex
+      .map(path => {
+        const pathLower = path.toLowerCase();
+        const matchCount = parts.filter(part => pathLower.includes(part)).length;
+        return { path, score: matchCount };
+      })
+      .filter(item => item.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 500)
+      .map(item => item.path);
     
+    results = pathsWithScore;
+  } else {
+    // Combine exact, substring, and fuzzy matches with scoring
+    const matchesWithScore: Array<{ path: string; score: number }> = [];
+    
+    // 1. Exact filename matches (highest score)
     for (const path of fileIndex) {
       const fileName = path.split('/').pop()?.toLowerCase() || '';
       
       if (fileName === queryLower) {
-        exactMatches.push(path);
+        matchesWithScore.push({ path, score: 1000 });
       } else if (fileName.includes(queryLower)) {
-        substringMatches.push(path);
-      }
-      
-      // Limit exact+substring matches to avoid processing too many
-      if (exactMatches.length + substringMatches.length >= 500) {
-        break;
+        // Substring match - score based on position and length ratio
+        const index = fileName.indexOf(queryLower);
+        const lengthRatio = queryLower.length / fileName.length;
+        const score = 500 + (100 - index) + (lengthRatio * 100);
+        matchesWithScore.push({ path, score });
       }
     }
     
-    // Use fuzzy search only if we don't have enough exact matches
-    if (exactMatches.length + substringMatches.length < 50 && fuseInstance) {
-      const fuzzyResults = fuseInstance.search(query, { limit: 200 });
-      const fuzzyMatches = fuzzyResults.map((r: any) => r.item);
-      results = [...exactMatches, ...substringMatches, ...fuzzyMatches];
-    } else {
-      results = [...exactMatches, ...substringMatches];
+    // 2. Always add fuzzy matches (lower scores)
+    if (fuseInstance) {
+      const fuzzyResults = fuseInstance.search(query, { limit: 300 });
+      for (const result of fuzzyResults) {
+        const path = result.item;
+        // Check if not already added as exact/substring match
+        if (!matchesWithScore.find(m => m.path === path)) {
+          // Fuse score: 0 is perfect, 1 is worst. Invert it: lower Fuse score = higher our score
+          const score = Math.max(0, 300 - (result.score || 0) * 300);
+          matchesWithScore.push({ path, score });
+        }
+      }
     }
     
-    // Remove duplicates and limit to 500
-    results = [...new Set(results)].slice(0, 500);
+    // Sort by score (highest first) and take top 500
+    matchesWithScore.sort((a, b) => b.score - a.score);
+    results = matchesWithScore.slice(0, 500).map(item => item.path);
   }
   
-  const searchTime = performance.now() - startTime;  self.postMessage({
+  const searchTime = performance.now() - startTime;
+  
+  self.postMessage({
     type: 'SEARCH_COMPLETE',
     data: { results, searchTime }
   });
