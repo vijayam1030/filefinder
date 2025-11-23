@@ -142,7 +142,7 @@ function performSearch(query: string) {
     results = fileIndex.filter(path => {
       const pathLower = path.toLowerCase();
       return parts.every(part => pathLower.includes(part));
-    }).slice(0, 2000);
+    }).slice(0, 500); // Reduced from 2000
   } else {
     // Exact matches first
     const exactMatches: string[] = [];
@@ -158,27 +158,25 @@ function performSearch(query: string) {
       }
       
       // Limit exact+substring matches to avoid processing too many
-      if (exactMatches.length + substringMatches.length >= 2000) {
+      if (exactMatches.length + substringMatches.length >= 500) {
         break;
       }
     }
     
     // Use fuzzy search only if we don't have enough exact matches
-    if (exactMatches.length + substringMatches.length < 100 && fuseInstance) {
-      const fuzzyResults = fuseInstance.search(query, { limit: 500 });
+    if (exactMatches.length + substringMatches.length < 50 && fuseInstance) {
+      const fuzzyResults = fuseInstance.search(query, { limit: 200 });
       const fuzzyMatches = fuzzyResults.map((r: any) => r.item);
       results = [...exactMatches, ...substringMatches, ...fuzzyMatches];
     } else {
       results = [...exactMatches, ...substringMatches];
     }
     
-    // Remove duplicates and limit
-    results = [...new Set(results)].slice(0, 2000);
+    // Remove duplicates and limit to 500
+    results = [...new Set(results)].slice(0, 500);
   }
   
-  const searchTime = performance.now() - startTime;
-  
-  self.postMessage({
+  const searchTime = performance.now() - startTime;  self.postMessage({
     type: 'SEARCH_COMPLETE',
     data: { results, searchTime }
   });

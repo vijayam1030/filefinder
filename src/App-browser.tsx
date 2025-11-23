@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { Search, File, Loader2, RefreshCw, Database, Zap, HardDrive, Clock, Folder, FileText, Copy, FolderOpen, History } from "lucide-react";
 import "./App.css";
 
@@ -356,55 +356,62 @@ function App() {
     return `${diffDays}d ago`;
   };
 
-  // Highlight matching parts in text
-  const highlightMatch = (text: string, query: string) => {
-    if (!query.trim()) return <>{text}</>;
-    
-    const parts = query.toLowerCase().split(/\s+/);
-    let result: React.ReactNode[] = [];
-    let lastIndex = 0;
-    const textLower = text.toLowerCase();
-    
-    // Find all matches
-    const matches: Array<{start: number, end: number}> = [];
-    parts.forEach(part => {
-      let index = 0;
-      while ((index = textLower.indexOf(part, index)) !== -1) {
-        matches.push({ start: index, end: index + part.length });
-        index += part.length;
+  // Highlight matching parts in text (optimized with useMemo)
+  const highlightMatch = useMemo(() => {
+    return (text: string, query: string) => {
+      if (!query.trim()) return text;
+      
+      const parts = query.toLowerCase().split(/\s+/).filter(p => p.length > 0);
+      const textLower = text.toLowerCase();
+      
+      // Find all match positions
+      const positions: Array<{start: number, end: number}> = [];
+      
+      parts.forEach(part => {
+        let index = 0;
+        while ((index = textLower.indexOf(part, index)) !== -1) {
+          positions.push({ start: index, end: index + part.length });
+          index++;
+        }
+      });
+      
+      if (positions.length === 0) return text;
+      
+      // Sort and merge overlapping ranges
+      positions.sort((a, b) => a.start - b.start);
+      const merged: Array<{start: number, end: number}> = [];
+      
+      positions.forEach(pos => {
+        if (merged.length === 0 || merged[merged.length - 1].end < pos.start) {
+          merged.push(pos);
+        } else {
+          merged[merged.length - 1].end = Math.max(merged[merged.length - 1].end, pos.end);
+        }
+      });
+      
+      // Build result with highlights
+      const result: React.ReactNode[] = [];
+      let lastIndex = 0;
+      
+      merged.forEach((pos, idx) => {
+        if (pos.start > lastIndex) {
+          result.push(text.substring(lastIndex, pos.start));
+        }
+        result.push(
+          <mark key={idx} className="highlight">
+            {text.substring(pos.start, pos.end)}
+          </mark>
+        );
+        lastIndex = pos.end;
+      });
+      
+      if (lastIndex < text.length) {
+        result.push(text.substring(lastIndex));
       }
-    });
-    
-    // Sort and merge overlapping matches
-    matches.sort((a, b) => a.start - b.start);
-    const merged: Array<{start: number, end: number}> = [];
-    matches.forEach(match => {
-      if (merged.length === 0 || merged[merged.length - 1].end < match.start) {
-        merged.push(match);
-      } else {
-        merged[merged.length - 1].end = Math.max(merged[merged.length - 1].end, match.end);
-      }
-    });
-    
-    // Build highlighted text
-    merged.forEach((match, idx) => {
-      if (match.start > lastIndex) {
-        result.push(<span key={`text-${idx}`}>{text.substring(lastIndex, match.start)}</span>);
-      }
-      result.push(
-        <mark key={`mark-${idx}`} className="highlight">
-          {text.substring(match.start, match.end)}
-        </mark>
-      );
-      lastIndex = match.end;
-    });
-    
-    if (lastIndex < text.length) {
-      result.push(<span key="text-end">{text.substring(lastIndex)}</span>);
-    }
-    
-    return <>{result}</>;
-  };
+      
+      return <>{result}</>;
+    };
+  }, []);
 
   return (
     <main className="container">
@@ -555,7 +562,7 @@ function App() {
           {query && results.length > 0 ? (
             <span className="results-count fade-in">
               <Database size={16} />
-              {results.length.toLocaleString()} results • {searchTime.toFixed(1)}ms
+              {results.length > 100 ? `Showing 100 of ${results.length.toLocaleString()}` : `${results.length.toLocaleString()} results`} • {searchTime.toFixed(1)}ms
             </span>
           ) : (
             <span style={{ opacity: 0 }}>Placeholder</span>
@@ -586,7 +593,7 @@ function App() {
         )}
 
         {!searching &&
-          results.map((fileResult, index) => (
+          results.slice(0, 100).map((fileResult, index) => (
             <div
               key={index}
               className="result-item"
