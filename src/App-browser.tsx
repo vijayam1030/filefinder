@@ -47,9 +47,17 @@ function App() {
   const workerRef = useRef<Worker | null>(null);
   const fileIndexRef = useRef<string[]>([]);
 
+  // Check if File System Access API is supported
+  const isFileSystemSupported = 'showDirectoryPicker' in window;
+
   // Parse file path into structured data
   // Select folder and index files using File System Access API
   const selectAndIndexFolder = async () => {
+    if (!isFileSystemSupported) {
+      alert('File System Access API is not supported in this browser. Please use Chrome, Edge, or another Chromium-based browser on desktop.');
+      return;
+    }
+    
     try {
       // @ts-ignore - File System Access API
       const dirHandle = await window.showDirectoryPicker({
@@ -287,11 +295,11 @@ function App() {
     });
   };
 
-  // Debounce
+  // Debounce - increase to 300ms for smoother typing
   useEffect(() => {
     const timer = setTimeout(() => {
       setDebouncedQuery(query);
-    }, 200);
+    }, 300);
     return () => clearTimeout(timer);
   }, [query]);
 
@@ -375,6 +383,16 @@ function App() {
           History
         </button>
       </div>
+
+      {/* Browser compatibility warning */}
+      {!isFileSystemSupported && (
+        <div className="warning-banner">
+          <div className="warning-content">
+            <strong>⚠️ Browser Not Supported</strong>
+            <p>This app requires the File System Access API, which is only available in Chrome, Edge, and other Chromium-based browsers on desktop.</p>
+          </div>
+        </div>
+      )}
 
       {activeTab === 'search' && (
         <>
@@ -466,7 +484,7 @@ function App() {
 
       {/* Search Input */}
       <form onSubmit={(e) => e.preventDefault()} className="search-container">
-        <Search className="search-icon" size={22} />
+        <Search className={searching ? "search-icon searching" : "search-icon"} size={22} />
         <input
           className="search-input"
           value={query}
@@ -481,24 +499,21 @@ function App() {
         />
       </form>
 
-      {/* Results */}
-      {query && results.length > 0 && (
-        <div className="results-header fade-in">
-          <span className="results-count">
-            <Database size={16} />
-            {results.length.toLocaleString()} results • {searchTime.toFixed(1)}ms
-          </span>
+      {/* Results Header - always show when indexed to prevent layout shift */}
+      {indexStats?.indexed && (
+        <div className="results-header">
+          {query && results.length > 0 ? (
+            <span className="results-count fade-in">
+              <Database size={16} />
+              {results.length.toLocaleString()} results • {searchTime.toFixed(1)}ms
+            </span>
+          ) : (
+            <span style={{ opacity: 0 }}>Placeholder</span>
+          )}
         </div>
       )}
 
-      <div className="results-list fade-in">
-        {searching && (
-          <div className="loading">
-            <div className="loading-spinner"></div>
-            <p>Searching...</p>
-          </div>
-        )}
-
+      <div className="results-list">
         {!searching && !indexStats?.indexed && !indexing && (
           <div className="empty-state">
             <FolderOpen size={64} style={{ opacity: 0.3 }} />

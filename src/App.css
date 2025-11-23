@@ -269,6 +269,23 @@ h1 {
   top: 50%;
   transform: translateY(-50%);
   color: #646cff;
+  transition: all 0.3s ease;
+}
+
+.search-icon.searching {
+  color: #8b5cf6;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+    transform: translateY(-50%) scale(1);
+  }
+  50% {
+    opacity: 0.5;
+    transform: translateY(-50%) scale(1.1);
+  }
 }
 
 .search-btn {
@@ -339,6 +356,7 @@ h1 {
   align-items: center;
   padding: 0 0.5rem;
   margin-bottom: 0.75rem;
+  min-height: 24px;
 }
 
 .results-count {
@@ -360,6 +378,7 @@ h1 {
   padding: 0.75rem;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.05);
   min-height: 300px;
+  contain: layout style paint;
 }
 
 .result-item {
@@ -596,28 +615,6 @@ h1 {
   animation: fadeIn 0.3s ease-out;
 }
 
-@keyframes slideIn {
-  from {
-    opacity: 0;
-    transform: translateX(-10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
-}
-
-.result-item {
-  animation: slideIn 0.2s ease-out backwards;
-}
-
-.result-item:nth-child(1) { animation-delay: 0.02s; }
-.result-item:nth-child(2) { animation-delay: 0.04s; }
-.result-item:nth-child(3) { animation-delay: 0.06s; }
-.result-item:nth-child(4) { animation-delay: 0.08s; }
-.result-item:nth-child(5) { animation-delay: 0.10s; }
-.result-item:nth-child(n+6) { animation-delay: 0.12s; }
-
 /* Footer */
 .footer {
   text-align: center;
@@ -670,6 +667,34 @@ h1 {
   right: 0;
   height: 2px;
   background: linear-gradient(90deg, #646cff 0%, #8b5cf6 100%);
+}
+
+/* Warning Banner */
+.warning-banner {
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: 12px;
+  padding: 1.5rem;
+  margin-bottom: 1rem;
+  animation: fadeIn 0.3s ease-out;
+}
+
+.warning-content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.warning-content strong {
+  color: #ef4444;
+  font-size: 1rem;
+}
+
+.warning-content p {
+  color: #fca5a5;
+  font-size: 0.9rem;
+  margin: 0;
+  line-height: 1.5;
 }
 
 /* History Container */
