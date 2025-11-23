@@ -140,30 +140,32 @@ function App() {
     }
     
     try {
+      // Show folder picker first (must be in user gesture)
       // @ts-ignore - File System Access API
       const dirHandle = await window.showDirectoryPicker({
         mode: 'read'
       });
       
-      // Prompt user for the full path (since browser can't access it for security)
-      const fullPath = prompt(
-        `Enter the full path to "${dirHandle.name}" folder (e.g., C:/Users/YourName/Projects/${dirHandle.name})`,
-        `C:/Users/User/${dirHandle.name}`
+      // Now ask for the path (after folder is selected)
+      const folderPath = prompt(
+        `Enter the full path to "${dirHandle.name}" folder:\n(e.g., C:\\Users\\YourName\\Projects\\${dirHandle.name})`,
+        `C:\\Users\\User\\${dirHandle.name}`
       );
       
-      if (!fullPath) {
-        setIndexing(false);
+      if (folderPath === null) {
         return;
       }
+      
+      const normalizedPath = (folderPath.trim() || dirHandle.name).replace(/\\/g, '/');
       
       setSelectedFolder(dirHandle.name);
       setIndexing(true);
       setIndexProgress(0);
       
-      // Send to worker for processing with full base path
+      // Send to worker for processing with the user-provided path
       workerRef.current?.postMessage({
         type: 'INDEX_FILES',
-        data: { dirHandle, basePath: fullPath.replace(/\\/g, '/') }
+        data: { dirHandle, basePath: normalizedPath }
       });
       
     } catch (error: any) {
