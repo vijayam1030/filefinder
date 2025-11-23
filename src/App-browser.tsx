@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { Search, File, Loader2, RefreshCw, Database, Zap, HardDrive, Clock, Folder, FileText, Copy, FolderOpen } from "lucide-react";
+import { Search, File, Loader2, RefreshCw, Database, Zap, HardDrive, Clock, Folder, FileText, Copy, FolderOpen, History } from "lucide-react";
 import "./App.css";
 
 interface IndexStats {
@@ -15,6 +15,19 @@ interface FileResult {
   extension: string;
 }
 
+interface SearchHistoryItem {
+  query: string;
+  timestamp: string;
+  resultCount: number;
+}
+
+interface IndexHistoryItem {
+  folderName: string;
+  folderPath: string;
+  timestamp: string;
+  fileCount: number;
+}
+
 function App() {
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
@@ -26,6 +39,9 @@ function App() {
   const [copiedPath, setCopiedPath] = useState<string | null>(null);
   const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
   const [indexProgress, setIndexProgress] = useState(0);
+  const [activeTab, setActiveTab] = useState<'search' | 'history'>('search');
+  const [searchHistory, setSearchHistory] = useState<SearchHistoryItem[]>([]);
+  const [indexHistory, setIndexHistory] = useState<IndexHistoryItem[]>([]);
   
   const workerRef = useRef<Worker | null>(null);
   const fileIndexRef = useRef<string[]>([]);
@@ -100,13 +116,24 @@ function App() {
         
         case 'INDEX_COMPLETE':
           fileIndexRef.current = data.files;
+          const timestamp = new Date().toISOString();
           setIndexStats({
             total_files: data.totalFiles,
             indexed: true,
-            last_indexed: new Date().toISOString()
+            last_indexed: timestamp
           });
           setIndexing(false);
           saveIndexToDB(data.files);
+          
+          // Add to index history
+          if (selectedFolder) {
+            addToIndexHistory({
+              folderName: selectedFolder,
+              folderPath: selectedFolder,
+              timestamp,
+              fileCount: data.totalFiles
+            });
+          }
           break;
         
         case 'INDEX_ERROR':
@@ -129,6 +156,7 @@ function App() {
     };
     
     loadIndexFromDB();
+    loadHistory();
     
     return () => {
       workerRef.current?.terminate();
@@ -197,6 +225,49 @@ function App() {
     }
   };
 
+  // History management
+  const loadHistory = () => {
+    try {
+      const searchHist = localStorage.getItem('searchHistory');
+      const indexHist = localStorage.getItem('indexHistory');
+      
+      if (searchHist) {
+        setSearchHistory(JSON.parse(searchHist));
+      }
+      if (indexHist) {
+        setIndexHistory(JSON.parse(indexHist));
+      }
+    } catch (error) {
+      console.error('Error loading history:', error);
+    }
+  };
+
+  const addToSearchHistory = (item: SearchHistoryItem) => {
+    setSearchHistory(prev => {
+      const updated = [item, ...prev.filter(h => h.query !== item.query)].slice(0, 50);
+      localStorage.setItem('searchHistory', JSON.stringify(updated));
+      return updated;
+    });
+  };
+
+  const addToIndexHistory = (item: IndexHistoryItem) => {
+    setIndexHistory(prev => {
+      const updated = [item, ...prev.filter(h => h.folderPath !== item.folderPath)].slice(0, 20);
+      localStorage.setItem('indexHistory', JSON.stringify(updated));
+      return updated;
+    });
+  };
+
+  const clearSearchHistory = () => {
+    setSearchHistory([]);
+    localStorage.removeItem('searchHistory');
+  };
+
+  const clearIndexHistory = () => {
+    setIndexHistory([]);
+    localStorage.removeItem('indexHistory');
+  };
+
   const performSearch = (searchQuery: string) => {
     if (!searchQuery || fileIndexRef.current.length === 0) {
       setResults([]);
@@ -238,6 +309,15 @@ function App() {
       await navigator.clipboard.writeText(path);
       setCopiedPath(path);
       setTimeout(() => setCopiedPath(null), 2000);
+      
+      // Add to search history when user clicks a result
+      if (debouncedQuery.trim()) {
+        addToSearchHistory({
+          query: debouncedQuery,
+          timestamp: new Date().toISOString(),
+          resultCount: results.length
+        });
+      }
     } catch (error) {
       console.error("Failed to copy:", error);
     }
@@ -274,6 +354,26 @@ function App() {
         <div className="app-version">v3.0.0 • Pure Browser</div>
       </div>
 
+      {/* Tabs */}
+      <div className="tabs-container">
+        <button 
+          className={`tab-btn ${activeTab === 'search' ? 'active' : ''}`}
+          onClick={() => setActiveTab('search')}
+        >
+          <Search size={16} />
+          Search
+        </button>
+        <button 
+          className={`tab-btn ${activeTab === 'history' ? 'active' : ''}`}
+          onClick={() => setActiveTab('history')}
+        >
+          <History size={16} />
+          History
+        </button>
+      </div>
+
+      {activeTab === 'search' && (
+        <>
       {/* Stats Grid */}
       {indexStats?.indexed && (
         <div className="stats-grid fade-in">
@@ -449,6 +549,91 @@ function App() {
             </div>
           ))}
       </div>
+      </>
+      )}
+
+      {/* History Tab */}
+      {activeTab === 'history' && (
+        <div className="history-container fade-in">
+          <div className="history-section">
+            <div className="history-header">
+              <h2>
+                <Search size={20} />
+                Recent Searches
+              </h2>
+              {searchHistory.length > 0 && (
+                <button className="clear-btn" onClick={clearSearchHistory}>
+                  Clear All
+                </button>
+              )}
+            </div>
+            {searchHistory.length === 0 ? (
+              <div className="empty-state">
+                <Search size={48} style={{ opacity: 0.3 }} />
+                <p>No search history yet</p>
+              </div>
+            ) : (
+              <div className="history-list">
+                {searchHistory.map((item, idx) => (
+                  <div 
+                    key={idx} 
+                    className="history-item"
+                    onClick={() => {
+                      setQuery(item.query);
+                      setActiveTab('search');
+                    }}
+                  >
+                    <div className="history-item-header">
+                      <span className="history-query">{item.query}</span>
+                      <span className="history-time">{formatTime(item.timestamp)}</span>
+                    </div>
+                    <div className="history-meta">
+                      <span className="result-badge">{item.resultCount} results</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="history-section">
+            <div className="history-header">
+              <h2>
+                <FolderOpen size={20} />
+                Indexed Folders
+              </h2>
+              {indexHistory.length > 0 && (
+                <button className="clear-btn" onClick={clearIndexHistory}>
+                  Clear All
+                </button>
+              )}
+            </div>
+            {indexHistory.length === 0 ? (
+              <div className="empty-state">
+                <FolderOpen size={48} style={{ opacity: 0.3 }} />
+                <p>No folders indexed yet</p>
+              </div>
+            ) : (
+              <div className="history-list">
+                {indexHistory.map((item, idx) => (
+                  <div key={idx} className="history-item">
+                    <div className="history-item-header">
+                      <span className="history-query">
+                        <Folder size={16} />
+                        {item.folderName}
+                      </span>
+                      <span className="history-time">{formatTime(item.timestamp)}</span>
+                    </div>
+                    <div className="history-meta">
+                      <span className="result-badge">{item.fileCount.toLocaleString()} files</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="footer">
         100% Browser-Based • No Backend Required • Data Stored Locally
