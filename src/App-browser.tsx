@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef, useMemo } from "react";
-import { Search, File, Loader2, RefreshCw, Database, Zap, HardDrive, Clock, Folder, FileText, Copy, FolderOpen, History } from "lucide-react";
+import { Search, File, Loader2, Database, Zap, HardDrive, Clock, Folder, FileText, Copy, FolderOpen, History } from "lucide-react";
 import "./App.css";
 
 interface IndexStats {
   total_files: number;
   indexed: boolean;
   last_indexed: string | null;
+  contentIndexed?: boolean;
 }
 
 interface FileResult {
@@ -45,7 +46,8 @@ function App() {
   const [activeTab, setActiveTab] = useState<'search' | 'history'>('search');
   const [searchHistory, setSearchHistory] = useState<SearchHistoryItem[]>([]);
   const [indexHistory, setIndexHistory] = useState<IndexHistoryItem[]>([]);
-  const [folderPathInput, setFolderPathInput] = useState<string>('');
+  const [searchMode, setSearchMode] = useState<'filename' | 'fulltext'>('filename');
+  const [indexContentEnabled, setIndexContentEnabled] = useState(false);
   
   const workerRef = useRef<Worker | null>(null);
   const fileIndexRef = useRef<string[]>([]);
@@ -152,14 +154,13 @@ function App() {
       const basePath = dirHandle.name;
       
       setSelectedFolder(dirHandle.name);
-      setFolderPathInput(dirHandle.name);
       setIndexing(true);
       setIndexProgress(0);
       
       // Send to worker for processing
       workerRef.current?.postMessage({
         type: 'INDEX_FILES',
-        data: { dirHandle, basePath }
+        data: { dirHandle, basePath, indexContent: indexContentEnabled }
       });
       
     } catch (error: any) {
@@ -217,10 +218,16 @@ function App() {
           setIndexStats({
             total_files: data.totalFiles,
             indexed: true,
-            last_indexed: timestamp
+            last_indexed: timestamp,
+            contentIndexed: data.contentIndexed
           });
           setIndexing(false);
           saveIndexToDB(data.files);
+          
+          // If content was not indexed, switch back to filename search
+          if (!data.contentIndexed && searchMode === 'fulltext') {
+            setSearchMode('filename');
+          }
           break;
         
         case 'INDEX_ERROR':
@@ -397,7 +404,7 @@ function App() {
     // Send to worker for processing
     workerRef.current?.postMessage({
       type: 'SEARCH',
-      data: { query: searchQuery }
+      data: { query: searchQuery, searchMode }
     });
   };
 
@@ -603,6 +610,16 @@ function App() {
             <div className="stat-subtitle">in browser cache</div>
           </div>
 
+          <div className="stat-card">
+            <div className="stat-label">Search Mode</div>
+            <div className="stat-value" style={{ fontSize: "1.25rem" }}>
+              {indexStats.contentIndexed ? '📄 Full-text' : '📁 Filename'}
+            </div>
+            <div className="stat-subtitle">
+              {indexStats.contentIndexed ? 'Content indexed' : 'Names only'}
+            </div>
+          </div>
+
           {searchTime > 0 && (
             <div className="stat-card">
               <div className="stat-label">Search Time</div>
@@ -667,6 +684,20 @@ function App() {
                 </div>
               </div>
             )}
+            <div className="content-index-option">
+              <label className="checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={indexContentEnabled}
+                  onChange={(e) => setIndexContentEnabled(e.target.checked)}
+                  disabled={indexing}
+                />
+                <span>Index file contents (enables full-text search)</span>
+              </label>
+              <p className="option-hint">
+                Text files under 100KB will be indexed for content searching. May increase indexing time.
+              </p>
+            </div>
             <button onClick={selectAndIndexFolder} className="build-index-btn">
               <FolderOpen size={18} />
               {indexStats?.indexed ? 'Re-index Folder' : 'Select Folder to Index'}
@@ -684,14 +715,39 @@ function App() {
           onChange={(e) => setQuery(e.target.value)}
           placeholder={
             indexStats?.indexed
-              ? 'Search: "Integer.java" or "spring Application.java"...'
+              ? (searchMode === 'fulltext' 
+                  ? 'Search file contents: "function", "class MyClass", etc...'
+                  : 'Search filenames: "Integer.java" or "spring Application.java"...')
               : "Enter folder path and index to start searching"
           }
           disabled={!indexStats?.indexed || indexing}
           autoFocus={indexStats?.indexed}
         />
       </form>
-          </div>
+
+      {/* Search Mode Toggle */}
+      {indexStats?.indexed && (
+        <div className="search-mode-toggle">
+          <button
+            className={`mode-btn ${searchMode === 'filename' ? 'active' : ''}`}
+            onClick={() => setSearchMode('filename')}
+            disabled={indexing}
+          >
+            <File size={16} />
+            Filename Search
+          </button>
+          <button
+            className={`mode-btn ${searchMode === 'fulltext' ? 'active' : ''}`}
+            onClick={() => setSearchMode('fulltext')}
+            disabled={indexing || !indexContentEnabled}
+            title={!indexContentEnabled ? 'Enable "Index file contents" when indexing to use full-text search' : ''}
+          >
+            <FileText size={16} />
+            Full-text Search
+          </button>
+        </div>
+      )}
+      </div>
 
           {/* Right Panel - Results */}
           <div className="right-panel">
