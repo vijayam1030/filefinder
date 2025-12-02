@@ -197,8 +197,8 @@ h1 {
   border-radius: 12px;
   padding: 1.25rem;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  flex-direction: column;
+  gap: 1rem;
 }
 
 .indexed-status,
@@ -229,6 +229,9 @@ h1 {
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
 }
 
 .indexed-info h3 {
@@ -244,11 +247,19 @@ h1 {
 }
 
 .last-indexed {
-  font-size: 0.8rem;
+  font-size: 0.75rem;
   color: #888;
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.last-indexed svg {
+  flex-shrink: 0;
 }
 
 .build-index-btn,
@@ -267,21 +278,22 @@ h1 {
 
 .folder-input-container {
   display: flex;
+  flex-direction: column;
   gap: 0.75rem;
-  align-items: center;
   width: 100%;
 }
 
 .folder-path-input {
-  flex: 1;
+  width: 100%;
   padding: 0.875rem 1.25rem;
   border: 2px solid rgba(100, 108, 255, 0.2);
   border-radius: 10px;
   background: rgba(30, 30, 40, 0.5);
   color: #e0e0e0;
-  font-size: 0.95rem;
+  font-size: 0.875rem;
   font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
   transition: all 0.2s ease;
+  box-sizing: border-box;
 }
 
 .folder-path-input:focus {
@@ -299,6 +311,9 @@ h1 {
   background: linear-gradient(135deg, #646cff, #7c84ff);
   color: white;
   box-shadow: 0 4px 12px rgba(100, 108, 255, 0.3);
+  width: 100%;
+  justify-content: center;
+  white-space: nowrap;
 }
 
 .build-index-btn:hover {

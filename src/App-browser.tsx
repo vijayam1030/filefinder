@@ -140,29 +140,26 @@ function App() {
       return;
     }
     
-    // Use the pasted path if available
-    if (!folderPathInput.trim()) {
-      alert('Please paste a folder path before clicking Index Folder');
-      return;
-    }
-    
     try {
-      // Show folder picker first (must be in user gesture)
+      // Show folder picker (browser security requires manual selection to grant access)
       // @ts-ignore - File System Access API
       const dirHandle = await window.showDirectoryPicker({
-        mode: 'read'
+        mode: 'read',
+        startIn: 'documents'
       });
       
-      const normalizedPath = folderPathInput.trim().replace(/\\/g, '/');
+      // Use folder name as base path
+      const basePath = dirHandle.name;
       
       setSelectedFolder(dirHandle.name);
+      setFolderPathInput(dirHandle.name);
       setIndexing(true);
       setIndexProgress(0);
       
-      // Send to worker for processing with the user-provided path
+      // Send to worker for processing
       workerRef.current?.postMessage({
         type: 'INDEX_FILES',
-        data: { dirHandle, basePath: normalizedPath }
+        data: { dirHandle, basePath }
       });
       
     } catch (error: any) {
@@ -659,28 +656,21 @@ function App() {
                     <Clock size={14} />
                     Updated {indexStats.last_indexed && formatTime(indexStats.last_indexed)}
                   </div>
-                  {folderPathInput && (
-                    <div className="last-indexed" style={{ marginTop: '0.25rem' }}>
+                  {selectedFolder && (
+                    <div className="last-indexed" title={selectedFolder}>
                       <FolderOpen size={14} />
-                      {toWindowsPath(folderPathInput)}
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {selectedFolder}
+                      </span>
                     </div>
                   )}
                 </div>
               </div>
             )}
-            <div className="folder-input-container">
-              <input
-                type="text"
-                className="folder-path-input"
-                value={folderPathInput}
-                onChange={(e) => setFolderPathInput(e.target.value)}
-                placeholder="Paste folder path (e.g., C:\Users\YourName\Projects\MyProject)"
-              />
-              <button onClick={selectAndIndexFolder} className="build-index-btn">
-                <FolderOpen size={18} />
-                {indexStats?.indexed ? 'Re-index' : 'Index Folder'}
-              </button>
-            </div>
+            <button onClick={selectAndIndexFolder} className="build-index-btn">
+              <FolderOpen size={18} />
+              {indexStats?.indexed ? 'Re-index Folder' : 'Select Folder to Index'}
+            </button>
           </>
         )}
       </div>
