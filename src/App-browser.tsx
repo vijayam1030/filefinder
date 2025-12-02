@@ -45,6 +45,7 @@ function App() {
   const [activeTab, setActiveTab] = useState<'search' | 'history'>('search');
   const [searchHistory, setSearchHistory] = useState<SearchHistoryItem[]>([]);
   const [indexHistory, setIndexHistory] = useState<IndexHistoryItem[]>([]);
+  const [folderPathInput, setFolderPathInput] = useState<string>('');
   
   const workerRef = useRef<Worker | null>(null);
   const fileIndexRef = useRef<string[]>([]);
@@ -139,6 +140,12 @@ function App() {
       return;
     }
     
+    // Use the pasted path if available
+    if (!folderPathInput.trim()) {
+      alert('Please paste a folder path before clicking Index Folder');
+      return;
+    }
+    
     try {
       // Show folder picker first (must be in user gesture)
       // @ts-ignore - File System Access API
@@ -146,17 +153,7 @@ function App() {
         mode: 'read'
       });
       
-      // Now ask for the path (after folder is selected)
-      const folderPath = prompt(
-        `Enter the full path to "${dirHandle.name}" folder:\n(e.g., C:\\Users\\YourName\\Projects\\${dirHandle.name})`,
-        `C:\\Users\\User\\${dirHandle.name}`
-      );
-      
-      if (folderPath === null) {
-        return;
-      }
-      
-      const normalizedPath = (folderPath.trim() || dirHandle.name).replace(/\\/g, '/');
+      const normalizedPath = folderPathInput.trim().replace(/\\/g, '/');
       
       setSelectedFolder(dirHandle.name);
       setIndexing(true);
@@ -667,10 +664,19 @@ function App() {
             </button>
           </>
         ) : (
-          <button onClick={selectAndIndexFolder} className="build-index-btn">
-            <FolderOpen size={18} />
-            Select Folder to Index
-          </button>
+          <div className="folder-input-container">
+            <input
+              type="text"
+              className="folder-path-input"
+              value={folderPathInput}
+              onChange={(e) => setFolderPathInput(e.target.value)}
+              placeholder="Paste folder path (e.g., C:\Users\YourName\Projects\MyProject)"
+            />
+            <button onClick={selectAndIndexFolder} className="build-index-btn">
+              <FolderOpen size={18} />
+              Index Folder
+            </button>
+          </div>
         )}
       </div>
 
