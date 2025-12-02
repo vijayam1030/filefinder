@@ -584,7 +584,9 @@ function App() {
       )}
 
       {activeTab === 'search' && (
-        <>
+        <div className="main-layout">
+          {/* Left Panel - Index Setup & Search */}
+          <div className="left-panel">
       {/* Stats Grid */}
       {indexStats?.indexed && (
         <div className="stats-grid fade-in">
@@ -644,39 +646,42 @@ function App() {
               </div>
             </div>
           </div>
-        ) : indexStats?.indexed ? (
+        ) : (
           <>
-            <div className="indexed-status">
-              <div className="status-icon">
-                <Database size={24} />
-              </div>
-              <div className="indexed-info">
-                <h3>Index Ready</h3>
-                <div className="last-indexed">
-                  <Clock size={14} />
-                  Updated {indexStats.last_indexed && formatTime(indexStats.last_indexed)}
+            {indexStats?.indexed && (
+              <div className="indexed-status">
+                <div className="status-icon">
+                  <Database size={24} />
+                </div>
+                <div className="indexed-info">
+                  <h3>Index Ready</h3>
+                  <div className="last-indexed">
+                    <Clock size={14} />
+                    Updated {indexStats.last_indexed && formatTime(indexStats.last_indexed)}
+                  </div>
+                  {folderPathInput && (
+                    <div className="last-indexed" style={{ marginTop: '0.25rem' }}>
+                      <FolderOpen size={14} />
+                      {toWindowsPath(folderPathInput)}
+                    </div>
+                  )}
                 </div>
               </div>
+            )}
+            <div className="folder-input-container">
+              <input
+                type="text"
+                className="folder-path-input"
+                value={folderPathInput}
+                onChange={(e) => setFolderPathInput(e.target.value)}
+                placeholder="Paste folder path (e.g., C:\Users\YourName\Projects\MyProject)"
+              />
+              <button onClick={selectAndIndexFolder} className="build-index-btn">
+                <FolderOpen size={18} />
+                {indexStats?.indexed ? 'Re-index' : 'Index Folder'}
+              </button>
             </div>
-            <button onClick={selectAndIndexFolder} className="refresh-btn">
-              <RefreshCw size={16} />
-              Re-index
-            </button>
           </>
-        ) : (
-          <div className="folder-input-container">
-            <input
-              type="text"
-              className="folder-path-input"
-              value={folderPathInput}
-              onChange={(e) => setFolderPathInput(e.target.value)}
-              placeholder="Paste folder path (e.g., C:\Users\YourName\Projects\MyProject)"
-            />
-            <button onClick={selectAndIndexFolder} className="build-index-btn">
-              <FolderOpen size={18} />
-              Index Folder
-            </button>
-          </div>
         )}
       </div>
 
@@ -690,33 +695,36 @@ function App() {
           placeholder={
             indexStats?.indexed
               ? 'Search: "Integer.java" or "spring Application.java"...'
-              : "Select a folder to start indexing"
+              : "Enter folder path and index to start searching"
           }
           disabled={!indexStats?.indexed || indexing}
           autoFocus={indexStats?.indexed}
         />
       </form>
+          </div>
 
-      {/* Results Header - always show when indexed to prevent layout shift */}
-      {indexStats?.indexed && (
-        <div className="results-header">
-          {displayQuery && displayResults.length > 0 ? (
-            <span className="results-count">
-              <Database size={16} />
-              {displayResults.length > 100 ? `Showing 100 of ${displayResults.length.toLocaleString()}` : `${displayResults.length.toLocaleString()} results`} • {searchTime.toFixed(1)}ms
-            </span>
-          ) : (
-            <span style={{ opacity: 0 }}>Placeholder</span>
-          )}
-        </div>
-      )}
+          {/* Right Panel - Results */}
+          <div className="right-panel">
+            {/* Results Header - always show when indexed to prevent layout shift */}
+            {indexStats?.indexed && (
+              <div className="results-header">
+                {displayQuery && displayResults.length > 0 ? (
+                  <span className="results-count">
+                    <Database size={16} />
+                    {displayResults.length > 100 ? `Showing 100 of ${displayResults.length.toLocaleString()}` : `${displayResults.length.toLocaleString()} results`} • {searchTime.toFixed(1)}ms
+                  </span>
+                ) : (
+                  <span style={{ opacity: 0 }}>Placeholder</span>
+                )}
+              </div>
+            )}
 
-      <div className="results-list">
+            <div className="results-list">
         {!searching && !indexStats?.indexed && !indexing && (
           <div className="empty-state">
             <FolderOpen size={64} style={{ opacity: 0.3 }} />
             <p style={{ fontSize: "1.125rem", color: "#888" }}>
-              Click "Select Folder to Index" to get started
+              Enter folder path and click Index to get started
             </p>
             <p style={{ fontSize: "0.875rem", color: "#666" }}>
               Your browser will ask permission to access the folder
@@ -768,7 +776,8 @@ function App() {
             </div>
           ))}
       </div>
-      </>
+          </div>
+        </div>
       )}
 
       {/* History Tab */}
